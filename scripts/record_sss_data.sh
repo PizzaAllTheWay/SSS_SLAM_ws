@@ -34,7 +34,10 @@ echo "[INFO] Workspace ready"
 # ROS TOPICS TO RECORD
 ############################################################
 ROS_TOPICS_TO_RECORD=(
-  /chatter
+  /hardware/imu
+  /hardware/depth
+  /hardware/dvl
+  /hardware/side_scan_sonar
 )
 
 ############################################################

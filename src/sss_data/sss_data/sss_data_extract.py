@@ -2,6 +2,8 @@ import csv
 from pathlib import Path
 from tf_transformations import quaternion_from_euler
 import math
+import bisect
+
 
 
 class SSSDataExtract:
@@ -22,6 +24,12 @@ class SSSDataExtract:
         self.ground_vel_reader = self._open_csv("GroundVelocity.csv")
         self.distance_reader   = self._open_csv("Distance.csv")
         self.sound_reader      = self._open_csv("SoundSpeed.csv")
+
+        self.distance_alt_time = 0
+        self.distance_alt_last = 0.0
+
+        self.sound_speed_time = 0
+        self.sound_speed_last = 0.0
 
         # Sonar data (Side scan sonar + Echo sounder sonar)
         self.sonar_reader = self._open_csv("SonarData.csv")
@@ -106,50 +114,124 @@ class SSSDataExtract:
         }
     
     def get_next_dvl(self):
-        # Keep reading until we find a valid DVL row
         while True:
             gv_row = next(self.ground_vel_reader, None)
-            dist_row = next(self.distance_reader, None)
-            ss_row = next(self.sound_reader, None)
-
-            # End of file
             if not gv_row:
                 return None
 
-            # Extract velocity components (m/s)
             vx = float(gv_row[4])
             vy = float(gv_row[5])
             vz = float(gv_row[6])
 
-            # Skip invalid sentinel values (bad DVL measurement)
             if abs(vx) > 30 or abs(vy) > 30 or abs(vz) > 30:
-                continue  # try next row
+                continue
 
-            # Timestamp handling
             timestamp = float(gv_row[0])
             rel_time = timestamp - self.start_time
 
-            # Compute ground speed and course (for convenience)
             speed_gnd = math.sqrt(vx**2 + vy**2)
             course_gnd = math.atan2(vy, vx)
 
-            # Altitude from Distance.csv (if valid)
+            # ALTITUDE + BEAM RANGES -----
+            #
+            # We do NOT try to align timestamps with DVL.
+            # Distance.csv is a forward-only stream.
+            #
+            # Every time beam 66 appears, a full beam block (62–66) is complete.
+            # So we:
+            #   • Keep a rolling buffer of the last 5 rows
+            #   • When we see beam 66 → that buffer is one full beam set
+            #
+            # Geometry:
+            #   62–65 → tilted 30° beams (slant range)
+            #   66    → vertical beam (true altitude)
+            #
+            # Altitude logic:
+            #   • Prefer vertical beam (66)
+            #   • Fallback → mean(slant) * cos(30°)
+            #   • cos(30°) = sqrt(3)/2
+
             altitude = 0.0
-            if dist_row and dist_row[3] == "VALID":
-                altitude = float(dist_row[6])
+            num_good_beams = 0
+            beam_ranges = [0.0, 0.0, 0.0, 0.0]
 
-            # Sound speed (if available)
-            sound_speed = float(ss_row[3]) if ss_row else 0.0
+            latest_block = []
 
-            # Return structured DVL packet
+            while True:
+                row = next(self.distance_reader, None)
+                if not row:
+                    break
+
+                # Maintain rolling last 5 rows (max beams per block)
+                latest_block.append(row)
+                if len(latest_block) > 5:
+                    latest_block.pop(0)
+
+                # Beam 66 marks end of a complete beam set
+                if int(row[2]) == 66:
+                    break
+
+            # Process the completed block
+            vertical_altitude = None
+            tilted_ranges = []
+
+            for row in latest_block:
+                if row[3].strip().upper() != "VALID":
+                    continue
+
+                beam_id = int(row[2])
+                rng = float(row[6])
+
+                if beam_id == 66:
+                    vertical_altitude = rng
+
+                elif beam_id in (62, 63, 64, 65):
+                    idx = beam_id - 62
+                    beam_ranges[idx] = rng
+                    tilted_ranges.append(rng)
+
+            # Decide altitude source
+            if vertical_altitude is not None:
+                altitude = vertical_altitude
+                num_good_beams = 1
+            elif tilted_ranges:
+                num_good_beams = len(tilted_ranges)
+                mean_slant = sum(tilted_ranges) / num_good_beams
+                altitude = (math.sqrt(3) / 2.0) * mean_slant
+
+            beam_ranges_valid = num_good_beams > 0
+
+            # SOUND SPEED -----
+            sound_speed = 0.0
+
+            while True:
+                if self.sound_speed_time > timestamp:
+                    break
+
+                row = next(self.sound_reader, None)
+                if not row:
+                    break
+
+                self.sound_speed_time = float(row[0])
+                self.sound_speed_last = float(row[3])
+
+            if abs(timestamp - self.sound_speed_time) < 1.0:
+                sound_speed = self.sound_speed_last
+
             return {
-                "t": rel_time,              # relative playback time
-                "timestamp": timestamp,     # absolute recorded time
+                "t": rel_time,
+                "timestamp": timestamp,
+
                 "velocity": (vx, vy, vz),
+
                 "altitude": altitude,
-                "speed_gnd": speed_gnd,
                 "course_gnd": course_gnd,
-                "sound_speed": sound_speed
+                "speed_gnd": speed_gnd,
+                "num_good_beams": num_good_beams,
+                "sound_speed": sound_speed,
+                "beam_ranges_valid": beam_ranges_valid,
+
+                "beam_ranges": beam_ranges,
             }
     
     def get_next_sonar(self):

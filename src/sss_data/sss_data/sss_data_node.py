@@ -158,17 +158,14 @@ class SSSDataNode(Node):
         msg.velocity.y = vy
         msg.velocity.z = vz
 
-        msg.velocity_covar[0] = -1.0  # unknown covariance
-
         msg.altitude = data["altitude"]
         msg.course_gnd = data["course_gnd"]
         msg.speed_gnd = data["speed_gnd"]
+        msg.num_good_beams = data["num_good_beams"]
+        msg.sound_speed = data["sound_speed"]
+        msg.beam_ranges_valid = data["beam_ranges_valid"]
 
-        msg.num_good_beams = 4
-        msg.sound_speed = float(data["sound_speed"])
-
-        msg.beam_ranges_valid = False
-        msg.beam_velocities_valid = False
+        msg.range = data["beam_ranges"]
 
         self.dvl_pub.publish(msg)
 
