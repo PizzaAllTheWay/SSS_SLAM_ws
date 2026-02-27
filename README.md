@@ -102,4 +102,6 @@ This node preserves the original UNIX timestamps from the logs, publishes at rea
 /hardware/depth             [std_msgs/Float64]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
+
+/benchmark/state_estimate [nav_msgs/Odometry]
 ```

@@ -34,6 +34,10 @@ class SSSDataExtract:
         # Sonar data (Side scan sonar + Echo sounder sonar)
         self.sonar_reader = self._open_csv("SonarData.csv")
 
+        # Benchmarks data for state estimate testing, this is current implementation of navigation on board
+        self.estimate_reader             = self._open_csv("EstimatedState.csv")
+        self.estimate_uncertainty_reader = self._open_csv("NavigationUncertainty.csv")
+
     def _open_csv(self, name):
         fp = open(self.data_dir / name, "r")
         reader = csv.reader(fp)
@@ -113,110 +117,29 @@ class SSSDataExtract:
             "depth": depth,
         }
     
-    def get_next_dvl(self):
+    def get_next_dvl_velocity_ground(self):
         while True:
-            gv_row = next(self.ground_vel_reader, None)
-            if not gv_row:
+            vel_g_row = next(self.ground_vel_reader, None)
+
+            if not vel_g_row:
                 return None
+            
+            # Extract the velocities
+            vx = float(vel_g_row[4])
+            vy = float(vel_g_row[5])
+            vz = float(vel_g_row[6])
 
-            vx = float(gv_row[4])
-            vy = float(gv_row[5])
-            vz = float(gv_row[6])
-
+            # If any dont make sense it will be ignored
             if abs(vx) > 30 or abs(vy) > 30 or abs(vz) > 30:
                 continue
 
-            timestamp = float(gv_row[0])
+            # timestamp
+            timestamp = float(vel_g_row[0])
             rel_time = timestamp - self.start_time
 
-            speed_gnd = math.sqrt(vx**2 + vy**2)
+            # Calculate the other extra options
             course_gnd = math.atan2(vy, vx)
-
-            # ALTITUDE + BEAM RANGES -----
-            #
-            # We do NOT try to align timestamps with DVL.
-            # Distance.csv is a forward-only stream.
-            #
-            # Every time beam 66 appears, a full beam block (62–66) is complete.
-            # So we:
-            #   • Keep a rolling buffer of the last 5 rows
-            #   • When we see beam 66 → that buffer is one full beam set
-            #
-            # Geometry:
-            #   62–65 → tilted 30° beams (slant range)
-            #   66    → vertical beam (true altitude)
-            #
-            # Altitude logic:
-            #   • Prefer vertical beam (66)
-            #   • Fallback → mean(slant) * cos(30°)
-            #   • cos(30°) = sqrt(3)/2
-
-            altitude = 0.0
-            num_good_beams = 0
-            beam_ranges = [0.0, 0.0, 0.0, 0.0]
-
-            latest_block = []
-
-            while True:
-                row = next(self.distance_reader, None)
-                if not row:
-                    break
-
-                # Maintain rolling last 5 rows (max beams per block)
-                latest_block.append(row)
-                if len(latest_block) > 5:
-                    latest_block.pop(0)
-
-                # Beam 66 marks end of a complete beam set
-                if int(row[2]) == 66:
-                    break
-
-            # Process the completed block
-            vertical_altitude = None
-            tilted_ranges = []
-
-            for row in latest_block:
-                if row[3].strip().upper() != "VALID":
-                    continue
-
-                beam_id = int(row[2])
-                rng = float(row[6])
-
-                if beam_id == 66:
-                    vertical_altitude = rng
-
-                elif beam_id in (62, 63, 64, 65):
-                    idx = beam_id - 62
-                    beam_ranges[idx] = rng
-                    tilted_ranges.append(rng)
-
-            # Decide altitude source
-            if vertical_altitude is not None:
-                altitude = vertical_altitude
-                num_good_beams = 1
-            elif tilted_ranges:
-                num_good_beams = len(tilted_ranges)
-                mean_slant = sum(tilted_ranges) / num_good_beams
-                altitude = (math.sqrt(3) / 2.0) * mean_slant
-
-            beam_ranges_valid = num_good_beams > 0
-
-            # SOUND SPEED -----
-            sound_speed = 0.0
-
-            while True:
-                if self.sound_speed_time > timestamp:
-                    break
-
-                row = next(self.sound_reader, None)
-                if not row:
-                    break
-
-                self.sound_speed_time = float(row[0])
-                self.sound_speed_last = float(row[3])
-
-            if abs(timestamp - self.sound_speed_time) < 1.0:
-                sound_speed = self.sound_speed_last
+            speed_gnd = math.sqrt(vx**2 + vy**2)
 
             return {
                 "t": rel_time,
@@ -224,15 +147,134 @@ class SSSDataExtract:
 
                 "velocity": (vx, vy, vz),
 
-                "altitude": altitude,
+                "altitude": 0.0,
                 "course_gnd": course_gnd,
                 "speed_gnd": speed_gnd,
-                "num_good_beams": num_good_beams,
-                "sound_speed": sound_speed,
-                "beam_ranges_valid": beam_ranges_valid,
+                "num_good_beams": 0,
+                "sound_speed": 0.0,
 
-                "beam_ranges": beam_ranges,
+                "range": [0.0]*4,
             }
+        
+    def get_next_dvl_range(self):
+        # Read Distance.csv until we can form ONE valid "range/altitude measurement"
+        # for a single timestamp. If there are no valid beams at a timestamp,
+        # keep scanning forward until we find a timestamp that has at least one VALID beam.
+        while True:
+            # Step 1: read one row (this gives us the next timestamp group)
+            row = next(self.distance_reader, None)
+            if not row:
+                return None 
+
+            # Step 2: extract the timestamp and compute playback relative time
+            timestamp = float(row[0])
+            rel_time = timestamp - self.start_time
+
+            # We will collect all beams that share this exact timestamp
+            current_time = timestamp
+
+            # This list will store ONLY beams marked VALID in this 62..66 block
+            beams_valid = []
+
+            # We assume row is already at beam 62 when entering here
+            while True:
+                # Keep only VALID beams
+                if row[3].strip().upper() == "VALID":
+                    beams_valid.append(row)
+
+                # If this is beam 66, the block is complete → STOP
+                if int(row[2]) == 66:
+                    break
+
+                # Move to next beam in the fixed 62..66 sequence
+                row = next(self.distance_reader, None)
+                if not row:
+                    return None  # EOF safety
+
+            # Step 4: if there were zero valid beams at this timestamp, try next timestamp
+            if not beams_valid:
+                continue
+
+            # Step 5: prepare outputs with safe defaults (ROS messages cannot use None)
+            altitude = 0.0                 # final "altitude" output [m]
+            beam_ranges = [0.0] * 4        # ranges for angled beams 62..65 (slant ranges)
+            num_good_beams = 0             # how many beams contributed (for Dvl.msg field)
+
+            # vertical beam (66) is preferred if present
+            vertical_altitude = None
+
+            # store valid slant ranges from tilted beams so we can average them if needed
+            tilted_ranges = []
+
+            # Step 6: parse the valid beams we collected
+            for b in beams_valid:
+                beam_id = int(b[2])   # beam number (62..66)
+                rng = float(b[6])     # measured range [m]
+
+                # Primary vertical beam: gives true altitude directly
+                if beam_id == 66:
+                    vertical_altitude = rng
+
+                # Secondary tilted beams (slant ranges). Save them and also store into array.
+                elif beam_id in (62, 63, 64, 65):
+                    idx = beam_id - 62           # map 62->0, 63->1, 64->2, 65->3
+                    beam_ranges[idx] = rng
+                    tilted_ranges.append(rng)
+
+            # Step 7: decide how to compute altitude
+            # If vertical beam exists and is valid -> use it (best)
+            if vertical_altitude is not None:
+                altitude = vertical_altitude
+                num_good_beams = 1
+
+            # Otherwise, use the mean of the tilted/slant beams and convert to altitude.
+            # For a 30° Janus configuration:
+            # altitude = cos(30°) * mean(slant_range) = (sqrt(3)/2) * mean(slant_range)
+            else:
+                num_good_beams = len(tilted_ranges)
+                mean_slant = sum(tilted_ranges) / num_good_beams
+                altitude = (math.sqrt(3) / 2.0) * mean_slant
+
+            # tep 8: return a fully-populated dict with defaults for unused fields
+            return {
+                "t": rel_time,
+                "timestamp": timestamp,
+
+                "velocity": (0.0, 0.0, 0.0),
+
+                "altitude": altitude,
+                "course_gnd": 0.0,
+                "speed_gnd": 0.0,
+                "num_good_beams": num_good_beams,
+                "sound_speed": 0.0,
+
+                "range": beam_ranges,
+            }
+        
+    def get_next_dvl_speed_sound(self):
+        row = next(self.sound_reader, None)
+        if not row:
+            return None
+
+        timestamp = float(row[0])
+        rel_time = timestamp - self.start_time
+
+        sound_speed = float(row[3])
+    
+        return {
+            "t": rel_time,
+            "timestamp": timestamp,
+
+            "velocity": (0.0, 0.0, 0.0),
+
+            "altitude": 0.0,
+            "course_gnd": 0.0,
+            "speed_gnd": 0.0,
+            "num_good_beams": 0,
+            "sound_speed": sound_speed,
+
+            "range": [0.0]*4,
+        }
     
     def get_next_sonar(self):
         # Keep reading until we find a SIDESCAN entry
@@ -274,3 +316,105 @@ class SSSDataExtract:
                 "samples_per_beam": samples_per_beam,
                 "data": raw_bytes,
             }
+        
+    def get_next_benchmark_state_estimate(self):
+        # Read one row from each (assumed synced)
+        est_row = next(self.estimate_reader, None)
+        unc_row = next(self.estimate_uncertainty_reader, None)
+        if not est_row or not unc_row:
+            return None
+
+        # Timestamp
+        timestamp = float(est_row[0])
+        rel_time = timestamp - self.start_time
+
+        # EstimatedState.csv
+        # cols: 
+        # t, system, entity
+        # x, y, z,
+        # phi (roll), theta (pitch), psi (yaw),
+        # p (roll rate), q (pitch rate), r (yaw rate),
+        # u (surge), v (sway), w (heave),
+        # bias_psi (yaw bias), bias_r (yaw rate bias)
+        x = float(est_row[3])
+        y = float(est_row[4])
+        z = float(est_row[5])
+
+        roll  = float(est_row[6])   # phi
+        pitch = float(est_row[7])   # theta
+        yaw   = float(est_row[8])   # psi
+
+        x_vel = float(est_row[12])   # u (body x)
+        y_vel = float(est_row[13])   # v (body y)
+        z_vel = float(est_row[14])   # w (body z)
+
+        # NavigationUncertainty.csv (same column layout as EstimatedState.csv)
+        # cols:
+        # 0 t, 1 system, 2 entity,
+        # 3 x, 4 y, 5 z,
+        # 6 phi(roll), 7 theta(pitch), 8 psi(yaw),
+        # 9 p(roll_rate), 10 q(pitch_rate), 11 r(yaw_rate),
+        # 12 u, 13 v, 14 w,
+        # 15 bias_psi, 16 bias_r
+        # Pose 
+        var_x     = float(unc_row[3])
+        var_y     = float(unc_row[4])
+        var_z     = float(unc_row[5])
+        var_roll  = float(unc_row[6])
+        var_pitch = float(unc_row[7])
+        var_yaw   = float(unc_row[8])
+
+        # Twist
+        var_x_vel      = float(unc_row[12])
+        var_y_vel      = float(unc_row[13])
+        var_z_vel      = float(unc_row[14])
+
+        # Index (6x6 start form 0 index so +1)
+        row_size = 6
+        i = row_size + 1
+        matrix_size = row_size * row_size
+
+        # Pose covariance is [x y z roll pitch yaw] as 6x6 row-major (36 elems)
+        # [var_x, 0    , 0    , 0       , 0        , 0      ]
+        # [0    , var_y, 0    , 0       , 0        , 0      ]
+        # [0    , 0    , var_z, 0       , 0        , 0      ]
+        # [0    , 0    , 0    , var_roll, 0        , 0      ]
+        # [0    , 0    , 0    , 0       , var_pitch, 0      ]
+        # [0    , 0    , 0    , 0       , 0        , var_yaw]
+        pose_cov = [0.0] * matrix_size
+        pose_cov[i*0] = var_x
+        pose_cov[i*1] = var_y
+        pose_cov[i*2] = var_z
+        pose_cov[i*3] = var_roll
+        pose_cov[i*4] = var_pitch
+        pose_cov[i*5] = var_yaw
+
+        # Twist covariance is [vx vy vz wx wy wz] as 6x6 row-major
+        # Map body linear (u,v,w) -> (vx,vy,vz) and body angular (p,q,r) -> (wx,wy,wz)
+        # [var_x_vel, 0        , 0        , 0            , 0             , 0           ]
+        # [0        , var_y_vel, 0        , 0            , 0             , 0           ]
+        # [0        , 0        , var_z_vel, 0            , 0             , 0           ]
+        # [0        , 0        , 0        , var_roll_rate, 0             , 0           ]
+        # [0        , 0        , 0        , 0            , var_pitch_rate, 0           ]
+        # [0        , 0        , 0        , 0            , 0             , var_yaw_rate]
+        twist_cov = [0.0] * matrix_size
+        twist_cov[i*0] = var_x_vel
+        twist_cov[i*1] = var_y_vel
+        twist_cov[i*2] = var_z_vel
+
+        # convert euler -> quaternion (roll, pitch, yaw)
+        qx, qy, qz, qw = quaternion_from_euler(roll, pitch, yaw)
+
+        return {
+            "t": rel_time,
+            "timestamp": timestamp,
+
+            # Pose
+            "position": (x, y, z),
+            "orientation": (qx, qy, qz, qw),
+            "pose_covariance": pose_cov,
+
+            # Twist
+            "lin_vel": (x_vel, y_vel, z_vel),
+            "twist_covariance": twist_cov,
+        }

@@ -26,6 +26,8 @@ sudo apt install ros-jazzy-marine-acoustic-msgs
 /hardware/depth             [std_msgs/Float64]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
+
+/benchmark/state_estimate [nav_msgs/Odometry]
 ```
 
 ---
@@ -65,6 +67,18 @@ DeepVision OSM2 Sidescan (SIDESCAN mode only).
 * Slant resolution ≈ 0.06 m per bin
 * uint8 intensity values
 * No beam geometry or TVG applied in node (raw intensity replay)
+
+**/benchmark/state_estimate** — `nav_msgs/Odometry`
+Onboard navigation (INS) solution replayed for benchmarking and validation purposes only.
+
+* Pose in `map` frame (x, y, z + quaternion orientation from roll/pitch/yaw)
+* Linear velocity in `base_link` (surge, sway, heave)
+* Pose covariance from `NavigationUncertainty.csv`
+* Twist covariance includes linear velocity variances
+* Original logged UNIX timestamps
+
+This topic can be used as system state estimate, however for this pipeline it is **NOT** used as the system state estimate.
+For this SLAM pipeline it exists purely as a reference solution to benchmark, compare, and validate our own SLAM/INS implementations against the onboard navigation performance.
 
 ---
 

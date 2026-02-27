@@ -38,6 +38,7 @@ ROS_TOPICS_TO_RECORD=(
   /hardware/depth
   /hardware/dvl
   /hardware/side_scan_sonar
+  /benchmark/state_estimate
 )
 
 ############################################################
