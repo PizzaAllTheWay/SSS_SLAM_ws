@@ -1,0 +1,589 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>2D Robot Localization - Tutorial &mdash; Unscented Kalman Filtering on (Parallelizable) Manifolds alpha documentation</title>
+  
+
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  
+  
+    <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  
+
+  
+    <link rel="stylesheet" href="../_static/gallery.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+
+  
+        <link rel="index" title="Index"
+              href="../genindex.html"/>
+        <link rel="search" title="Search" href="../search.html"/>
+    <link rel="top" title="Unscented Kalman Filtering on (Parallelizable) Manifolds alpha documentation" href="../index.html"/>
+        <link rel="next" title="Examples" href="../examples.html"/>
+        <link rel="prev" title="Installation" href="../install.html"/> 
+
+  
+  <script src="../_static/js/modernizr.min.js"></script>
+
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search">
+          
+
+          
+            <a href="../index.html" class="icon icon-home"> Unscented Kalman Filtering on (Parallelizable) Manifolds
+          
+
+          
+            
+            <img src="../_static/blacklogo.png" class="logo" />
+          
+          </a>
+
+          
+            
+            
+              <div class="version">
+                1.0
+              </div>
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+                <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../install.html">Installation</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Tutorial</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#import">Import</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#the-model">The Model</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#simulating-the-model">Simulating the Model</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#filter-design">Filter Design</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#filter-initialization">Filter Initialization</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#filtering">Filtering</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#results">Results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#conclusion">Conclusion</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="reference internal" href="../examples.html">Examples</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Robot Localization - Tutorial</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#import">Import</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#the-model">The Model</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#simulating-the-model">Simulating the Model</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#filter-design">Filter Design</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#filter-initialization">Filter Initialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#filtering">Filtering</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#results">Results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#conclusion">Conclusion</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="wifibot.html">2D Robot Localization on Real Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="attitude.html">Attitude Estimation with an IMU</a></li>
+<li class="toctree-l2"><a class="reference internal" href="inertial_navigation.html">Navigation on Flat Earth</a></li>
+<li class="toctree-l2"><a class="reference internal" href="slam2d.html">2D Robot SLAM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imugnss.html">IMU-GNSS Sensor-Fusion on the KITTI Dataset</a></li>
+<li class="toctree-l2"><a class="reference internal" href="pendulum.html">Pendulum Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../benchmarks.html">Benchmarks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../filter.html">Filters</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../model.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../geometry.html">Lie Groups</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../matlab.html">Matlab</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="../index.html">Unscented Kalman Filtering on (Parallelizable) Manifolds</a>
+      </nav>
+
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          
+
+ 
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../index.html">Docs</a> &raquo;</li>
+      
+    <li>2D Robot Localization - Tutorial</li>
+      <li class="wy-breadcrumbs-aside">
+        
+          
+            <a href="../_sources/auto_examples/localization.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p>Click <a class="reference internal" href="#sphx-glr-download-auto-examples-localization-py"><span class="std std-ref">here</span></a> to download the full example code</p>
+</div>
+<div class="sphx-glr-example-title section" id="d-robot-localization-tutorial">
+<span id="localization-tutorial"></span><span id="sphx-glr-auto-examples-localization-py"></span><h1>2D Robot Localization - Tutorial<a class="headerlink" href="#d-robot-localization-tutorial" title="Permalink to this headline">¶</a></h1>
+<p>This tutorial introduces the main aspects of <strong>UKF-M</strong>.</p>
+<p>Goals of this script:</p>
+<ul class="simple">
+<li><p>understand the main principles of Unscented Kalman Filtering on Manifolds
+(<strong>UKF-M</strong>) <a class="reference internal" href="../bibliography.html#brossardcode2019" id="id1">[BBB19]</a>.</p></li>
+<li><p>get familiar with the implementation.</p></li>
+<li><p>design an UKF for a vanilla 2D robot localization problem.</p></li>
+</ul>
+<p><em>We assume the reader to have sufficient prior knowledge with (unscented) Kalman
+filtering. However, we require really approximate prior knowledge and intuition
+about manifolds and tangent spaces.</em></p>
+<p>This tutorial describes all one require to design an Unscented Kalman Filter
+(UKF) on a (parallelizable) manifold, and puts in evidence the versatility and
+simplicity of the method in term of implementation. Indeed, we need to define an
+UKF on parallelizable manifolds:</p>
+<ol class="arabic simple">
+<li><p>a <strong>model</strong> of the state-space system that specifies the propagation and
+measurement functions of the system.</p></li>
+<li><p>an <strong>uncertainty representation</strong> of the estimated state, which is a mapping
+that generalizes the linear uncertainty definition <span class="math notranslate nohighlight">\(\mathbf{e} =
+\mathbf{x} - \mathbf{\hat{x}}\)</span>.</p></li>
+<li><p>standard UKF parameters that are noise covariance matrices and sigma point
+parameters.</p></li>
+</ol>
+<p>We introduce the methodology by addressing the vanilla problem of robot
+localization, where the robot obtains velocity measurements, e.g., from wheel
+odometry, and position measurements, e.g., from GPS. The state consists of the
+robot orientation along with the 2D robot position. We reproduce the example
+described in <a class="reference internal" href="../bibliography.html#barrauinvariant2017" id="id2">[BB17]</a>, Section IV.</p>
+<div class="section" id="import">
+<h2>Import<a class="headerlink" href="#import" title="Permalink to this headline">¶</a></h2>
+<p>Package import is minimal, as <strong>UKF-M</strong> is mainly build on the standard NumPy
+package.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">ukfm</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">matplotlib</span>
+<span class="n">ukfm</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">set_matplotlib_config</span><span class="p">()</span>
+<span class="c1"># The matplotlib configuration is adjusted for better rendering the figures.</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="the-model">
+<h2>The Model<a class="headerlink" href="#the-model" title="Permalink to this headline">¶</a></h2>
+<p>The first ingredient we need is a <strong>model</strong> that defines:</p>
+<ol class="arabic">
+<li><p>the state of the system at instant <span class="math notranslate nohighlight">\(n\)</span>, noted
+<span class="math notranslate nohighlight">\(\boldsymbol{\chi}_n \in \mathcal{M}\)</span>, where <span class="math notranslate nohighlight">\(\mathcal{M}\)</span> is a
+parallelizable manifold (vectors spaces, Lie groups and others). Here the
+state corresponds to the robot orientation and the robot position:</p>
+<div class="math notranslate nohighlight">
+\[\mathcal{M} = \left\{ \begin{matrix} \mathbf{C} \in SO(2),
+\mathbf{p} \in \mathbb R^2 \end{matrix} \right\}.\]</div>
+</li>
+<li><p>a propagation function that describes how the state evolves along time</p>
+<div class="math notranslate nohighlight">
+\[\boldsymbol{\chi}_n = f(\boldsymbol{\chi}_{n-1},
+\boldsymbol{\omega}_{n}, \mathbf{w}_{n}) \in \mathcal{M},\]</div>
+<p>where <span class="math notranslate nohighlight">\(\boldsymbol{\omega}_{n} \in \mathcal{U}\)</span> is the input of the
+system and <span class="math notranslate nohighlight">\(\mathbf{w}_{n} \sim \mathcal{N}(\mathbf{0},
+\mathbf{Q}_n)\)</span> is a Gaussian noise.</p>
+</li>
+<li><p>an observation function describing the measures we have in the form of:</p>
+<div class="math notranslate nohighlight">
+\[\mathbf{y}_n = h(\boldsymbol{\chi}_{n}) + \mathbf{v}_n \in
+\mathbb{R}^p,\]</div>
+<p>where <span class="math notranslate nohighlight">\(\mathbf{v}_{n} \sim \mathcal{N}(\mathbf{0}, \mathbf{R}_n)\)</span> is
+a Gaussian noise.</p>
+</li>
+</ol>
+<p>The code contains models, which are declared as class. In this script, we use
+the <code class="docutils literal notranslate"><span class="pre">LOCALIZATION</span></code> model.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">MODEL</span> <span class="o">=</span> <span class="n">ukfm</span><span class="o">.</span><span class="n">LOCALIZATION</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>A state or an input is an instance of the <code class="docutils literal notranslate"><span class="pre">STATE</span></code> or <code class="docutils literal notranslate"><span class="pre">INPUT</span></code> class that
+is described in the <code class="docutils literal notranslate"><span class="pre">MODEL</span></code>, and can thus handle a complex form not
+restricted  to vector. In contrast, we consider for conciseness that any
+measurement at time <span class="math notranslate nohighlight">\(n\)</span> is a vector (1D-array).</p>
+</div>
+<div class="section" id="simulating-the-model">
+<h3>Simulating the Model<a class="headerlink" href="#simulating-the-model" title="Permalink to this headline">¶</a></h3>
+<p>We compute simulated data, where the robot drives along a 10 m diameter circle
+for 40 seconds with high rate odometer measurements (100 Hz) and low rate
+position measurements (1 Hz). We first define the model parameters, create an
+instance of the model, and compute the true states along with noisy inputs.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># sequence time (s)</span>
+<span class="n">T</span> <span class="o">=</span> <span class="mi">40</span>
+<span class="c1"># odometry frequency (Hz)</span>
+<span class="n">odo_freq</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="c1">#  create the model</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">MODEL</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">odo_freq</span><span class="p">)</span>
+<span class="c1"># odometry noise standard deviation</span>
+<span class="n">odo_std</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.01</span><span class="p">,</span>          <span class="c1"># longitudinal speed (v/m)</span>
+                    <span class="mf">0.01</span><span class="p">,</span>          <span class="c1"># transverse shift speed (v/m)</span>
+                    <span class="mi">1</span><span class="o">/</span><span class="mi">180</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">])</span>  <span class="c1"># differential odometry (rad/s)</span>
+<span class="c1"># radius of the circle trajectory (m)</span>
+<span class="n">radius</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="c1"># simulate trajectory</span>
+<span class="n">states</span><span class="p">,</span> <span class="n">omegas</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">simu_f</span><span class="p">(</span><span class="n">odo_std</span><span class="p">,</span> <span class="n">radius</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The model encodes how non-linear noise affects the propagation function. In
+contrast, we assume measurement noise affects the observations linearly. It
+spares us computational time, but the method can be adapted to handle
+non-linear observation noises of the form
+<span class="math notranslate nohighlight">\(\mathbf{y}_n = h(\boldsymbol{\chi}_{n}, \mathbf{v}_n)\)</span>.</p>
+</div>
+<p>The state and input variables are both a list of <code class="docutils literal notranslate"><span class="pre">STATE</span></code> and <code class="docutils literal notranslate"><span class="pre">INPUT</span></code>
+instances. One can access a variable at specific instant <span class="math notranslate nohighlight">\(n\)</span> as:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">state_n</span> <span class="o">=</span> <span class="n">states</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="c1"># model.STATE instance</span>
+<span class="n">omega_n</span> <span class="o">=</span> <span class="n">omegas</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="c1"># model.INPUT instance</span>
+</pre></div>
+</div>
+<p>We can access to the elements of the state or the input as:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">state_n</span><span class="o">.</span><span class="n">Rot</span>    <span class="c1"># 2d orientation encoded in a rotation matrix</span>
+<span class="n">state_n</span><span class="o">.</span><span class="n">p</span>      <span class="c1"># 2d position</span>
+<span class="n">omega_n</span><span class="o">.</span><span class="n">v</span>      <span class="c1"># robot forward velocity</span>
+<span class="n">omega_n</span><span class="o">.</span><span class="n">gyro</span>   <span class="c1"># robot angular velocity</span>
+</pre></div>
+</div>
+<p>These elements depend on the considered problem and are defined in the model.
+See at the <a class="reference internal" href="../model.html#ukfm.LOCALIZATION" title="ukfm.LOCALIZATION"><code class="xref py py-meth docutils literal notranslate"><span class="pre">LOCALIZATION()</span></code></a>  documentation to get a brief
+mathematical description.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The orientation <code class="docutils literal notranslate"><span class="pre">states[n].Rot</span></code> is defined via a rotation matrix. We
+always define for clarity orientations in matrices living  in <span class="math notranslate nohighlight">\(SO(2)\)</span>
+and <span class="math notranslate nohighlight">\(SO(3)\)</span>. The method remains compatible with quaternion. We may
+drop some numerical issues, e.g. round-off that leads to non-orthogonal
+rotation matrices, to let the code simple.</p>
+</div>
+<p>With the <em>true</em> states, we simulate <em>noisy</em> measurements.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># GPS frequency (Hz)</span>
+<span class="n">gps_freq</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="c1"># GPS noise standard deviation (m)</span>
+<span class="n">gps_std</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="c1"># simulate measurements</span>
+<span class="n">ys</span><span class="p">,</span> <span class="n">one_hot_ys</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">simu_h</span><span class="p">(</span><span class="n">states</span><span class="p">,</span> <span class="n">gps_freq</span><span class="p">,</span> <span class="n">gps_std</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The variable <code class="docutils literal notranslate"><span class="pre">ys</span></code> is a 2D array that contains all the observations of the
+sequence. To get the k-th measurement, take the k-th element of the variable
+as:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">y_k</span> <span class="o">=</span> <span class="n">ys</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="c1"># vector (1D array)</span>
+</pre></div>
+</div>
+<p>We have defined an array <code class="docutils literal notranslate"><span class="pre">one_hot_ys</span></code> that contains 1 at instant where a
+measurement happens and 0 otherwise.</p>
+<p>Let us visualizes the robot trajectory along with measurements.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">plot_traj</span><span class="p">(</span><span class="n">states</span><span class="p">,</span> <span class="n">ys</span><span class="p">)</span>
+</pre></div>
+</div>
+<img alt="../_images/sphx_glr_localization_0011.png" class="sphx-glr-single-img" src="../_images/sphx_glr_localization_0011.png" />
+<p>GPS measurements are visibly noisy.</p>
+</div>
+</div>
+<div class="section" id="filter-design">
+<h2>Filter Design<a class="headerlink" href="#filter-design" title="Permalink to this headline">¶</a></h2>
+<p>Designing an UKF on parallelizable manifolds consists in:</p>
+<ol class="arabic">
+<li><p>defining a model of the propagation function and the measurement function.</p></li>
+<li><p>choosing the retraction <span class="math notranslate nohighlight">\(\varphi(.,.)\)</span> and inverse retraction
+<span class="math notranslate nohighlight">\(\varphi^{-1}_.(.)\)</span> such that</p>
+<div class="math notranslate nohighlight">
+\[ \begin{align}\begin{aligned}\boldsymbol{\chi} &amp;= \varphi(\hat{\boldsymbol{\chi}}, \boldsymbol{\xi})
+\in \mathcal{M},\\\boldsymbol{\xi} &amp;= \varphi^{-1}_{\hat{\boldsymbol{\chi}}}
+(\boldsymbol{\chi}) \in \mathbb{R}^d,\end{aligned}\end{align} \]</div>
+<p>where <span class="math notranslate nohighlight">\(\boldsymbol{\chi}\)</span> is the true state,
+<span class="math notranslate nohighlight">\(\hat{\boldsymbol{\chi}}\)</span> the estimated state, and
+<span class="math notranslate nohighlight">\(\boldsymbol{\xi}\)</span> the state uncertainty (we does not use the
+notation <span class="math notranslate nohighlight">\(\mathbf{x}\)</span> and <span class="math notranslate nohighlight">\(\mathbf{e}\)</span> to emphasize the
+differences with the linear case).</p>
+</li>
+<li><p>setting UKF parameters such as sigma point dispersion and noise covariance
+values.</p></li>
+</ol>
+<p>Step 1) is already done, as we take the functions defined in the model.</p>
+<p>Step 2) consists in choosing the mapping that encode our representation of the
+state belief. A basic UKF is building on the uncertainty defined as
+<span class="math notranslate nohighlight">\(\mathbf{e} = \mathbf{x} - \mathbf{\hat{x}}\)</span>, which is not necessary
+optimal. Rather than, we define the uncertainty <span class="math notranslate nohighlight">\(\boldsymbol{\xi}\)</span>
+thought <span class="math notranslate nohighlight">\(\boldsymbol{\chi} = \varphi(\hat{\boldsymbol{\chi}},
+\boldsymbol{\xi})\)</span>, where the <em>retraction</em> <span class="math notranslate nohighlight">\(\varphi(.,.)\)</span> has to
+satisfy <span class="math notranslate nohighlight">\(\varphi(\boldsymbol{\chi}, \mathbf{0}) = \boldsymbol{\chi}\)</span>
+(without uncertainty, the estimated state equals the true state). We then need
+an <em>inverse retraction</em> to get a difference from two states that must respect
+<span class="math notranslate nohighlight">\(\varphi^{-1}_{\boldsymbol{\chi}}(\boldsymbol{\chi}) = \mathbf{0}\)</span>.</p>
+<p>We embed here the state in <span class="math notranslate nohighlight">\(SO(2) \times \mathbb{R}^2\)</span>, such that:</p>
+<ul class="simple">
+<li><p>the retraction <span class="math notranslate nohighlight">\(\varphi(.,.)\)</span> is the <span class="math notranslate nohighlight">\(SO(2)\)</span> exponential for
+orientation and the vector addition for position.</p></li>
+<li><p>the inverse retraction <span class="math notranslate nohighlight">\(\varphi^{-1}_.(.)\)</span> is the <span class="math notranslate nohighlight">\(SO(2)\)</span>
+logarithm for orientation and the vector subtraction for position.</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>We define different choices of retraction and inverse retraction
+directly in the model.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>One can suggest alternative retractions, e.g. by viewing the state as a
+element of <span class="math notranslate nohighlight">\(SE(2)\)</span>. In the benchmarks section, we compare different
+choices of retraction for different problems.</p>
+</div>
+<p>We define the filter parameters based on the model.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># propagation noise covariance matrix</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">odo_std</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="c1"># measurement noise covariance matrix</span>
+<span class="n">R</span> <span class="o">=</span> <span class="n">gps_std</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="c1"># sigma point parameters</span>
+<span class="n">alpha</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">])</span>
+<span class="c1"># this parameter scales the sigma points.</span>
+<span class="c1"># Current values are between 10^-3 and 1.</span>
+</pre></div>
+</div>
+<div class="section" id="filter-initialization">
+<h3>Filter Initialization<a class="headerlink" href="#filter-initialization" title="Permalink to this headline">¶</a></h3>
+<p>We initialize the filter with the true state with a small heading error of 1°.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># &quot;add&quot; orientation error to the initial state</span>
+<span class="n">state0</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">STATE</span><span class="p">(</span><span class="n">Rot</span><span class="o">=</span><span class="n">states</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">Rot</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">ukfm</span><span class="o">.</span><span class="n">SO2</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="mi">1</span><span class="o">/</span><span class="mi">180</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)),</span>
+                     <span class="n">p</span><span class="o">=</span><span class="n">states</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">p</span><span class="p">)</span>
+<span class="c1"># initial state uncertainty covariance matrix</span>
+<span class="n">P0</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="c1"># The state is not perfectly initialized</span>
+<span class="n">P0</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="o">/</span><span class="mi">180</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span>
+</pre></div>
+</div>
+<p>We define the filter as an instance  of the <code class="docutils literal notranslate"><span class="pre">UKF</span></code> class.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ukf</span> <span class="o">=</span> <span class="n">ukfm</span><span class="o">.</span><span class="n">UKF</span><span class="p">(</span><span class="n">state0</span><span class="o">=</span><span class="n">state0</span><span class="p">,</span>          <span class="c1">#  initial state</span>
+               <span class="n">P0</span><span class="o">=</span><span class="n">P0</span><span class="p">,</span>                  <span class="c1"># initial covariance</span>
+               <span class="n">f</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">f</span><span class="p">,</span>              <span class="c1"># propagation model</span>
+               <span class="n">h</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">h</span><span class="p">,</span>              <span class="c1"># observation model</span>
+               <span class="n">Q</span><span class="o">=</span><span class="n">Q</span><span class="p">,</span>                    <span class="c1"># process noise covariance</span>
+               <span class="n">R</span><span class="o">=</span><span class="n">R</span><span class="p">,</span>                    <span class="c1"># observation noise covariance</span>
+               <span class="n">phi</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">phi</span><span class="p">,</span>          <span class="c1"># retraction</span>
+               <span class="n">phi_inv</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">phi_inv</span><span class="p">,</span>  <span class="c1"># inverse retraction</span>
+               <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span>             <span class="c1"># sigma point parameters</span>
+               <span class="p">)</span>
+</pre></div>
+</div>
+<p>Before launching the filter, we set a list for recording estimates along the
+full trajectory and a 3D array to record covariance estimates.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ukf_states</span> <span class="o">=</span> <span class="p">[</span><span class="n">ukf</span><span class="o">.</span><span class="n">state</span><span class="p">]</span>
+<span class="n">ukf_Ps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">model</span><span class="o">.</span><span class="n">N</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">ukf_Ps</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">ukf</span><span class="o">.</span><span class="n">P</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="filtering">
+<h3>Filtering<a class="headerlink" href="#filtering" title="Permalink to this headline">¶</a></h3>
+<p>The UKF proceeds as a standard Kalman filter with a for loop.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># measurement iteration number (first measurement is for n == 0)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">N</span><span class="p">):</span>
+    <span class="c1"># propagation</span>
+    <span class="n">ukf</span><span class="o">.</span><span class="n">propagation</span><span class="p">(</span><span class="n">omegas</span><span class="p">[</span><span class="n">n</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">model</span><span class="o">.</span><span class="n">dt</span><span class="p">)</span>
+    <span class="c1"># update only if a measurement is received</span>
+    <span class="k">if</span> <span class="n">one_hot_ys</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">ukf</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">ys</span><span class="p">[</span><span class="n">k</span><span class="p">])</span>
+        <span class="n">k</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="c1"># save estimates</span>
+    <span class="n">ukf_states</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ukf</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+    <span class="n">ukf_Ps</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">=</span> <span class="n">ukf</span><span class="o">.</span><span class="n">P</span>
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="results">
+<h2>Results<a class="headerlink" href="#results" title="Permalink to this headline">¶</a></h2>
+<p>We plot the trajectory, GPS measurements and estimated trajectory. We then
+plot the orientation and position errors along with 95% (<span class="math notranslate nohighlight">\(3\sigma\)</span>)
+confident interval. The results has to be confirmed with average metrics to
+reveal the filter performances in term of accuracy, consistency and
+robustness.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">plot_results</span><span class="p">(</span><span class="n">ukf_states</span><span class="p">,</span> <span class="n">ukf_Ps</span><span class="p">,</span> <span class="n">states</span><span class="p">,</span> <span class="n">ys</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="sphx-glr-horizontal">
+<li><img alt="../_images/sphx_glr_localization_0021.png" class="sphx-glr-multi-img" src="../_images/sphx_glr_localization_0021.png" />
+</li>
+<li><img alt="../_images/sphx_glr_localization_0031.png" class="sphx-glr-multi-img" src="../_images/sphx_glr_localization_0031.png" />
+</li>
+<li><img alt="../_images/sphx_glr_localization_0041.png" class="sphx-glr-multi-img" src="../_images/sphx_glr_localization_0041.png" />
+</li>
+</ul>
+<p>All results seem coherent. This is expected as the initial heading error is
+small.</p>
+</div>
+<div class="section" id="conclusion">
+<h2>Conclusion<a class="headerlink" href="#conclusion" title="Permalink to this headline">¶</a></h2>
+<p>This script introduces UKF-M and shows how designing an UKF on parallelizable
+manifolds mainly consists in choosing an advantageous uncertainty
+representation. Two major interests of the method are that many problems could
+be addressed within the framework, and that both the theory and its
+implementation are sufficiently simple.</p>
+<p>The filter works apparently well on a simple robot localization problem, with
+small initial heading error. Is it hold for more challenging initial error ?</p>
+<p>You can now:</p>
+<ul class="simple">
+<li><p>enter more in depth with the theory, see <a class="reference internal" href="../bibliography.html#brossardcode2019" id="id3">[BBB19]</a>.</p></li>
+<li><p>address the UKF for the same problem with different noise parameters, and
+test its robustness to strong initial heading error.</p></li>
+<li><p>modify the propagation model with a differential odometry model, where
+inputs are left and right wheel speed measurements.</p></li>
+<li><p>apply the UKF for the same problem on real data.</p></li>
+<li><p>benchmark the UKF with different retractions and compare the new filters
+to both the extended Kalman filter and invariant extended Kalman filter of
+<a class="reference internal" href="../bibliography.html#barrauinvariant2017" id="id4">[BB17]</a>.</p></li>
+</ul>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> ( 0 minutes  3.914 seconds)</p>
+<div class="sphx-glr-footer class sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-localization-py">
+<div class="sphx-glr-download docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/28219bd51c1a96321aa7f65c2e3474fa/localization.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">localization.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/ccf7c8638027455cbf79aa77763c6510/localization.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">localization.ipynb</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</div>
+</div>
+
+
+           </div>
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../examples.html" class="btn btn-neutral float-right" title="Examples" accesskey="n">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="../install.html" class="btn btn-neutral" title="Installation" accesskey="p"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2019, Martin Brossard, Axel Barrau, Silvère Bonnabel.
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/snide/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../',
+            VERSION:'alpha',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true
+        };
+    </script>
+      <script type="text/javascript" src="../_static/jquery.js"></script>
+      <script type="text/javascript" src="../_static/underscore.js"></script>
+      <script type="text/javascript" src="../_static/doctools.js"></script>
+      <script type="text/javascript" src="../_static/language_data.js"></script>
+      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/latest.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+  
+
+  
+  
+    <script type="text/javascript" src="../_static/js/theme.js"></script>
+  
+
+  
+  
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.StickyNav.enable();
+      });
+  </script>
+   
+
+</body>
+</html>

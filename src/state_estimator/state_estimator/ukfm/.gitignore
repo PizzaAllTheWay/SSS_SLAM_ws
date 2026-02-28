@@ -1,0 +1,13 @@
+.idea
+*/__pycache__
+*.pyc
+docsource/build
+.vscode
+matlab/benchmarks/html
+matlab/examples/html
+python/ukfm.egg-info
+python/venv
+python/.idea
+python/.vscode
+TODO.txt
+Brossard2019UKF-M.pdf

@@ -2,7 +2,6 @@
   <name>sss_data</name>
   <version>1.0.0</version>
   <description>Convert Side Scan Sonar CSV data to ROS format</description>
-
   <maintainer email="karate.martynas1@gmail.com">Martynas</maintainer>
   <license>MIT</license>
 
