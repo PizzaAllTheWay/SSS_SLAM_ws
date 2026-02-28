@@ -8,13 +8,20 @@ All messages use the recorded UNIX timestamp in `header.stamp`.
 ---
 
 # Dependencies
-* ROS 2 Jazzy
-* marine_acoustic_msgs (install with):
+All required dependencies are installed automatically via the setup script as described in main `README.md`:
+```bash
+./scripts/install_dependencies.sh
+```
+If that fails for any reason, you can install them manually as described below.
 
+* marine_acoustic_msgs:
 ```bash
 sudo apt install ros-jazzy-marine-acoustic-msgs
 ```
+Uses:
+[https://docs.ros.org/en/jazzy/p/marine_acoustic_msgs/](https://docs.ros.org/en/jazzy/p/marine_acoustic_msgs/)
 
+Other dependencies are standard ROS 2 messages (preinstalled).
 * Standard ROS 2 packages (sensor_msgs, std_msgs, geometry_msgs, builtin_interfaces)
 * Normal Python 3 packages (already included in ROS environment)
 

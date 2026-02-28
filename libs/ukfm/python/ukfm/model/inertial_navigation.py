@@ -1,6 +1,8 @@
 import numpy as np
 from ukfm import SO3, SEK3
 import matplotlib.pyplot as plt
+from scipy.constants import g
+
 
 
 class INERTIAL_NAVIGATION:
@@ -12,7 +14,7 @@ class INERTIAL_NAVIGATION:
     :arg imu_freq: IMU frequency (Hz).
     r"""
 
-    g = np.array([0, 0, -9.82])
+    g = np.array([0, 0, g])
     "gravity vector (m/s^2) :math:`\\mathbf{g}`."
 
     N_ldk = 3

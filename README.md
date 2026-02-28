@@ -20,15 +20,11 @@ All data must be published using standard ROS 2 message formats.
 * Ubuntu 24.04 LTS
 * ROS 2 Jazzy
 
-All the dependencies can be installed using:
+Rest of the dependencies that are specific to the code pipeline can be installed using automated script:
 ```
 ./scripts/install_dependencies.sh
 ```
-
-Uses:
-[https://docs.ros.org/en/jazzy/p/marine_acoustic_msgs/](https://docs.ros.org/en/jazzy/p/marine_acoustic_msgs/)
-
-Other dependencies are standard ROS 2 messages (preinstalled).
+Or manually by following individual `README.md` in each ROS package inside `src/<ros-pkg>/README.md`
 
 ---
 

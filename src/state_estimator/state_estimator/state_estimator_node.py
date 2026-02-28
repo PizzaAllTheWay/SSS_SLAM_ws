@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import numpy as np
+import scipy.spatial.transform as transform
+
 import rclpy
 from rclpy.node import Node
 
@@ -7,7 +9,7 @@ from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Quaternion
 
-from ukfm.ukf import UKF
+from ukfm.ukf.ukf import UKF
 from ukfm.model.inertial_navigation import INERTIAL_NAVIGATION as MODEL
 
 
@@ -81,8 +83,8 @@ class StateEstimatorNode(Node):
 
         self.last_time = None
     
-    def h_orientation(state: MODEL.STATE):
-        return state.Rot
+    def h_orientation(self, state: MODEL.STATE):
+        return transform.Rotation.from_matrix(state.Rot).as_rotvec()
 
     def imu_callback(self, msg: Imu):
         # Convert ROS time data structure to readable time in precise seconds
@@ -117,11 +119,16 @@ class StateEstimatorNode(Node):
         # Propagate IMU data
         self.ukf.propagation(omega, dt)
 
+        #! Debugging:
+        state = self.ukf.state
+        acc_world = state.Rot.dot(acc) + self.model.g
+        self.get_logger().info(f"acc_world: {acc_world}")
+
         # Format ROS AHRS data to be in same format as the filter wants
         R_meas = quat_to_rot(msg.orientation)
 
         # AHRS update (orientation)
-        y = R_meas
+        y = transform.Rotation.from_matrix(R_meas).as_rotvec()
         self.ukf.update(y)
 
         # Publish state estimate
