@@ -7,75 +7,75 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Quaternion
 
 from ukfm.ukf.ukf import UKF
 from ukfm.model.inertial_navigation import INERTIAL_NAVIGATION as MODEL
 
 
 
-# TODO: ! Will have to replace ther is a python package for this stuff
-def quat_to_rot(q: Quaternion):
-    x, y, z, w = q.x, q.y, q.z, q.w
-    R = np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
-        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x*x + y*y)]
-    ])
-    return R
-
-# TODO: ! Will have to replace ther is a python package for this stuff
-def rot_to_quat(R):
-    w = np.sqrt(1.0 + np.trace(R)) / 2.0
-    x = (R[2, 1] - R[1, 2]) / (4.0 * w)
-    y = (R[0, 2] - R[2, 0]) / (4.0 * w)
-    z = (R[1, 0] - R[0, 1]) / (4.0 * w)
-    return x, y, z, w
-
-
-
 class StateEstimatorNode(Node):
     def __init__(self):
+        # Initialize node
         super().__init__('state_estimator_node')
 
+        # Initialize ROS subscribers
         self.sub_imu = self.create_subscription(Imu, '/hardware/imu', self.imu_callback, 1)
 
+        # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
 
+        # Initialize and get ROS parameters
+        self.declare_parameter("imu.orientation", [0.0, 0.0, 0.0])
+        self.declare_parameter("imu.freq"       , 0)
+        self.declare_parameter("imu.acc.std"    , 0.0)
+        self.declare_parameter("imu.gyro.std"   , 0.0)
+        self.declare_parameter("imu.ahrs.std"   , 0.0)
+        self.declare_parameter("ukfm.P_0", [0.0]*9)
+
+        imu_orientation = self.get_parameter("imu.orientation").get_parameter_value().double_array_value
+        imu_freq        = self.get_parameter("imu.freq").get_parameter_value().integer_value
+        imu_acc_std     = self.get_parameter("imu.acc.std").get_parameter_value().double_value
+        imu_gyro_std    = self.get_parameter("imu.gyro.std").get_parameter_value().double_value
+        imu_ahrs_std    = self.get_parameter("imu.ahrs.std").get_parameter_value().double_value
+        P_0 = self.get_parameter("ukfm.P_0").get_parameter_value().double_array_value
+
+        self.get_logger().info(f"imu.orientation: {imu_orientation}")
+        self.get_logger().info(f"imu.freq:        {imu_freq}")
+        self.get_logger().info(f"imu.acc.std:     {imu_acc_std}")
+        self.get_logger().info(f"imu.gyro.std:    {imu_gyro_std}")
+        self.get_logger().info(f"imu.ahrs.std:    {imu_ahrs_std}")
+        self.get_logger().info(f"ukfm.P_0: {P_0}")
+
         # UKF model
-        # TODO: imu_freq shoudl be a ros parameter
-        self.model = MODEL(T=1, imu_freq=50)  # T dummy (not used online)
+        self.model = MODEL(T=1, imu_freq=imu_freq)  # T dummy (not used online)
+
+        # Initialize location of sensors
+        self.R_imu_to_ned = transform.Rotation.from_euler('xyz', imu_orientation).as_matrix()
+        self.get_logger().info(f"R_imu_to_ned:\n{np.array2string(self.R_imu_to_ned, precision=3, suppress_small=True)}")
 
         # initial state
-        # TODO: These shoudl be ROS parameters as well
         Rot0 = np.eye(3)
         v0 = np.zeros(3)
         p0 = np.zeros(3)
 
         state0 = self.model.STATE(Rot=Rot0, v=v0, p=p0)
 
-        # TODO: This P_0 should also be a ROS parameter
-        P0 = 1e-3 * np.eye(9)
-
-        # TODO: These std should also be ROS parameters
-        gyro_std = 0.05
-        acc_std = 0.1
+        P_0_matrix = np.diag(P_0)
 
         Q = np.diag([
-            gyro_std**2, gyro_std**2, gyro_std**2,
-            acc_std**2,  acc_std**2,  acc_std**2
+            imu_gyro_std**2, imu_gyro_std**2, imu_gyro_std**2,
+            imu_acc_std**2 , imu_acc_std**2 , imu_acc_std**2
         ])
 
-        # TODO: This Should also be a ROS parameter
-        R_meas = 0.05**2 * np.eye(3)
+        R_ahrs = imu_ahrs_std**2 * np.eye(3)
 
         self.ukf = UKF(
             state0=state0,
-            P0=P0,
+            P0=P_0_matrix,
             f=self.model.f,
             h=self.h_orientation,
             Q=Q,
-            R=R_meas,
+            R=R_ahrs,
             phi=self.model.phi,
             phi_inv=self.model.phi_inv,
             alpha=np.ones(9) * 1e-3
@@ -101,17 +101,20 @@ class StateEstimatorNode(Node):
         self.last_time = t
 
         # Format ROS IMU data to UKF-M lib format
+        # Important to translate form IMU to NED frame before passing down the values because filter lives in NED and IMU lives in ENU
         gyro = np.array([
             msg.angular_velocity.x,
             msg.angular_velocity.y,
             msg.angular_velocity.z
         ])
-
         acc = np.array([
             msg.linear_acceleration.x,
             msg.linear_acceleration.y,
             msg.linear_acceleration.z
         ])
+
+        gyro = self.R_imu_to_ned @ gyro
+        acc  = self.R_imu_to_ned @ acc
 
         # Set up the input data structure that will propagate IMU data through the filter
         omega = self.model.INPUT(gyro=gyro, acc=acc)
@@ -119,13 +122,16 @@ class StateEstimatorNode(Node):
         # Propagate IMU data
         self.ukf.propagation(omega, dt)
 
-        #! Debugging:
-        state = self.ukf.state
-        acc_world = state.Rot.dot(acc) + self.model.g
-        self.get_logger().info(f"acc_world: {acc_world}")
-
         # Format ROS AHRS data to be in same format as the filter wants
-        R_meas = quat_to_rot(msg.orientation)
+        # Important to translate form IMU to NED frame before passing down the values because filter lives in NED and IMU lives in ENU
+        R_meas = transform.Rotation.from_quat([
+            msg.orientation.x,
+            msg.orientation.y,
+            msg.orientation.z,
+            msg.orientation.w
+        ]).as_matrix()
+
+        R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
 
         # AHRS update (orientation)
         y = transform.Rotation.from_matrix(R_meas).as_rotvec()
@@ -149,7 +155,7 @@ class StateEstimatorNode(Node):
         odom.pose.pose.position.z = state.p[2]
 
         # Orientation
-        qx, qy, qz, qw = rot_to_quat(state.Rot)
+        qx, qy, qz, qw = transform.Rotation.from_matrix(state.Rot).as_quat()
         odom.pose.pose.orientation.x = qx
         odom.pose.pose.orientation.y = qy
         odom.pose.pose.orientation.z = qz

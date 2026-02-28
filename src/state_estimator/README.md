@@ -23,6 +23,8 @@ If the folder is missing or broken, clone the official repository and place it i
 ```bash
 git clone https://github.com/CAOR-MINES-ParisTech/ukfm.git
 ```
+**Note:** The UKF-M model operates in an NED (Z-down) world frame using the standard positive gravity magnitude on the Z-axis. Our drone IMU is mounted upright and follows an ENU (Z-up) convention, where stationary Z acceleration is negative. Therefore, IMU measurements must be rotated from ENU to NED before entering the filter. Gravity is defined using the precise standard constant for consistency. If your IMU mounting differs, adjust the rotation in `config/IMU_params.yaml` accordingly. (See `SSS_SLAM_ws/libs/ukfm/python/ukfm/model/inertial_navigation.py` for absolute `g` definition)
+
 
 * marine_acoustic_msgs:
 ```bash

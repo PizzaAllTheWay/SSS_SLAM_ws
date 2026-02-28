@@ -1,0 +1,32 @@
+/**:
+  ros__parameters:
+    imu:
+      # IMU mounting orientation (roll, pitch, yaw) in radians.
+      #
+      # The UKF world frame is NED (Z-down).
+      # The physical IMU follows ROS ENU convention (Z-up).
+      #
+      # To convert ENU → NED we:
+      #   - swap X and Y
+      #   - flip Z
+      #
+      # This is equivalent to the following Euler rotation (xyz order):
+      #   roll  = π
+      #   pitch = 0
+      #   yaw   = π/2
+      #
+      # If the IMU mounting changes, update these values.
+      orientation: [3.141592653589793, 0.0, 1.5707963267948966]
+
+      # Sampling frequency for IMU data
+      freq: 50 # Hz
+
+      acc:
+        std: 0.1
+
+      gyro:
+        std: 0.05
+
+      ahrs:
+        std: 0.05
+        
