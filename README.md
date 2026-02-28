@@ -20,10 +20,9 @@ All data must be published using standard ROS 2 message formats.
 * Ubuntu 24.04 LTS
 * ROS 2 Jazzy
 
-Acoustic messages:
+All the dependencies can be installed using:
 ```
-sudo apt update
-sudo apt install ros-jazzy-marine-acoustic-msgs
+./scripts/install_dependencies.sh
 ```
 
 Uses:

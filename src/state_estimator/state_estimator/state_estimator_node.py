@@ -7,9 +7,9 @@ from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Quaternion
 
-from ukfm import UKF
-from ukfm import SO3
+from ukfm.ukf import UKF
 from ukfm.model.inertial_navigation import INERTIAL_NAVIGATION as MODEL
+
 
 
 # TODO: ! Will have to replace ther is a python package for this stuff
