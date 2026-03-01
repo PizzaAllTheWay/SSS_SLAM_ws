@@ -1,0 +1,21 @@
+/**:
+  ros__parameters:
+    benchmark:
+      # Benchmark frame orientation (roll, pitch, yaw) in radians.
+      #
+      # Benchmark data is assumed ENU (Z-up)
+      # Estimator world frame is NED (Z-down)
+      #
+      # ENU → NED:
+      #   swap X and Y
+      #   flip Z
+      #
+      # Equivalent Euler rotation (xyz):
+      #   roll  = π
+      #   pitch = 0
+      #   yaw   = π/2
+      #
+      # Modify if benchmark source frame differs.
+      orientation: [3.141592653589793, 0.0, 1.5707963267948966]
+
+        

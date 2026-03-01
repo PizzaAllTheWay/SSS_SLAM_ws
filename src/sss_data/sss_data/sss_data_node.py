@@ -2,13 +2,16 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Float64
+from geometry_msgs.msg import PointStamped
 from marine_acoustic_msgs.msg import Dvl, RawSonarImage, SonarImageData
 from nav_msgs.msg import Odometry
 from builtin_interfaces.msg import Time
 from ament_index_python.packages import get_package_share_directory
+
 from pathlib import Path
 import time
+import scipy.spatial.transform as transform
+import numpy as np
 
 from sss_data.sss_data_extract import SSSDataExtract
 
@@ -17,7 +20,15 @@ from sss_data.sss_data_extract import SSSDataExtract
 class SSSDataNode(Node):
     # Init (START) --------------------------------------------------
     def __init__(self):
+        # Initialize ROS node
         super().__init__("sss_data_node")
+
+        # Get ROS params
+        self.declare_parameter("benchmark.orientation", [0.0, 0.0, 0.0])
+
+        bench_orientation = self.get_parameter("benchmark.orientation").get_parameter_value().double_array_value
+
+        self.R_bench_to_ned = transform.Rotation.from_euler('xyz', bench_orientation).as_matrix()
         
         # Specify path to CSV data -----
         pkg_share = Path(get_package_share_directory("sss_data"))
@@ -26,7 +37,7 @@ class SSSDataNode(Node):
 
         # Publishers -----
         self.imu_pub   = self.create_publisher(Imu,           "/hardware/imu",             10)
-        self.depth_pub = self.create_publisher(Float64,       "/hardware/depth",           10)
+        self.depth_pub = self.create_publisher(PointStamped,  "/hardware/depth",           10)
         self.dvl_pub   = self.create_publisher(Dvl,           "/hardware/dvl",             10)
         self.sonar_pub = self.create_publisher(RawSonarImage, "/hardware/side_scan_sonar", 10)
 
@@ -211,8 +222,17 @@ class SSSDataNode(Node):
         self.imu_pub.publish(msg)
 
     def publish_depth(self, data):
-        msg = Float64()
-        msg.data = data["depth"]
+        msg = PointStamped()
+
+        sec = int(data["timestamp"])
+        nanosec = int((data["timestamp"] - sec) * 1e9)
+        msg.header.stamp = Time(sec=sec, nanosec=nanosec)
+        msg.header.frame_id = "depth_link"
+
+        msg.point.x = 0.0
+        msg.point.y = 0.0
+        msg.point.z = data["depth"]
+
         self.depth_pub.publish(msg)
 
     def publish_dvl(self, data, flags):
@@ -270,6 +290,8 @@ class SSSDataNode(Node):
         self.sonar_pub.publish(msg)
 
     def publish_benchmark(self, data):
+        R = self.R_bench_to_ned
+
         msg = Odometry()
 
         sec = int(data["timestamp"])
@@ -278,28 +300,40 @@ class SSSDataNode(Node):
         msg.header.frame_id = "map"
         msg.child_frame_id = "base_link"
 
-        # Pose
-        x, y, z = data["position"]
-        msg.pose.pose.position.x = x
-        msg.pose.pose.position.y = y
-        msg.pose.pose.position.z = z
+        # Position (ENU → NED)
+        p_enu = np.array(data["position"])
+        p_ned = R @ p_enu
 
-        qx, qy, qz, qw = data["orientation"]
-        msg.pose.pose.orientation.x = qx
-        msg.pose.pose.orientation.y = qy
-        msg.pose.pose.orientation.z = qz
-        msg.pose.pose.orientation.w = qw
+        msg.pose.pose.position.x = p_ned[0]
+        msg.pose.pose.position.y = p_ned[1]
+        msg.pose.pose.position.z = p_ned[2]
 
+        # Orientation (ENU → NED)
+        q_enu = transform.Rotation.from_quat(data["orientation"])
+        R_enu = q_enu.as_matrix()
+        R_ned = R @ R_enu
+        q_ned = transform.Rotation.from_matrix(R_ned).as_quat()
+
+        msg.pose.pose.orientation.x = q_ned[0]
+        msg.pose.pose.orientation.y = q_ned[1]
+        msg.pose.pose.orientation.z = q_ned[2]
+        msg.pose.pose.orientation.w = q_ned[3]
+
+        # Pose Covariances
         msg.pose.covariance = data["pose_covariance"]
 
         # Twist
-        vx, vy, vz = data["lin_vel"]
-        msg.twist.twist.linear.x = vx
-        msg.twist.twist.linear.y = vy
-        msg.twist.twist.linear.z = vz
+        v_enu = np.array(data["lin_vel"])
+        v_ned = R @ v_enu
 
+        msg.twist.twist.linear.x = v_ned[0]
+        msg.twist.twist.linear.y = v_ned[1]
+        msg.twist.twist.linear.z = v_ned[2]
+
+        # Twist Covariances
         msg.twist.covariance = data["twist_covariance"]
 
+        # Publish to ROS
         self.benchmark_pub.publish(msg)
     # Publishers (STOP) --------------------------------------------------
 

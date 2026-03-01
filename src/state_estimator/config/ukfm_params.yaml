@@ -3,4 +3,4 @@
     ukfm:
       # State vector is 9 so Uncertainty of the state vector must reflect that and be a square matrix 9x9
       # States: [Rotation (roll, pitch, yaw), Velocity (x, y, z), Position (x, y, z)]
-      P_0: [0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+      P_0: [1.000, 1.000, 1.000, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]

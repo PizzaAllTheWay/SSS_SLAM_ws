@@ -200,6 +200,11 @@ class UKF:
         # avoid non-symmetric matrix
         self.P = (self.P + self.P.T)/2
 
+        # NOTE: Store innovation statistics for NIS
+        self.S = P_yy
+        self.y_bar = y_bar
+        self.innovation = y - y_bar
+
 
 class JUKF:
     r"""The Unscented Kalman Filter on (parallelizable) Manifolds, that infers 

@@ -30,7 +30,7 @@ Other dependencies are standard ROS 2 messages (preinstalled).
 # Published Topics
 ```
 /hardware/imu               [sensor_msgs/Imu]
-/hardware/depth             [std_msgs/Float64]
+/hardware/depth             [geometry_msgs/PointStamped]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
 
@@ -49,7 +49,7 @@ IMU data from Microstrain 3DM-GX4 AHRS.
 * Timestamp is original logged UNIX time
 * No covariance fields filled (can be added from Navigation.AUV.Navigation config if needed)
 
-**/hardware/depth** — `std_msgs/Float64`
+**/hardware/depth** — `geometry_msgs/PointStamped`
 Depth in meters derived from Keller-33x pressure sensor.
 
 * Raw depth only

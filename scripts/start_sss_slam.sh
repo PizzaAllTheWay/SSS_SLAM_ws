@@ -20,6 +20,22 @@ source install/setup.bash
 echo "[INFO] Workspace ready"
 
 ############################################################
+# CHECK FOR FLAGS
+############################################################
+LOG=false
+
+for arg in "$@"
+do
+  case $arg in
+    --LOG=*)
+      LOG="${arg#*=}"
+      ;;
+  esac
+done
+
+echo "[INFO] LOG = ${LOG}"
+
+############################################################
 # MONO TMUX EXECUTOR
 ############################################################
 mono_execute() {
@@ -65,7 +81,7 @@ cleanup() {
 # START FUNCTIONS
 ############################################################
 start_state_estimator() {
-  mono_execute state_estimator "ros2 launch state_estimator state_estimator.launch.py"
+  mono_execute state_estimator "ros2 launch state_estimator state_estimator.launch.py log:=${LOG}"
 }
 
 ############################################################

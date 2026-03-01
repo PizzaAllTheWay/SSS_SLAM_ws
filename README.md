@@ -34,7 +34,7 @@ Or manually by following individual `README.md` in each ROS package inside `src/
 
 The pipeline is designed to run from ROS 2 bags. The normal workflow is to start the full SLAM system first and then play back recorded data into it. Run:
 
-```
+```bash
 ./scripts/build_sss_slam.sh
 ./scripts/start_sss_slam.sh
 ./scripts/play_sss_data.sh
@@ -44,11 +44,17 @@ The last command replays a ROS 2 bag into the running system. You can replace it
 
 If your vehicle did not record ROS 2 bags and instead logged data using DUNE/Neptus (as is the case for the LAUV platform from LSTS), the data will typically exist as CSV logs. In that case you must first convert the recorded CSV files into ROS 2 topics and record them into a bag. This repository provides a custom replay node for that exact purpose. Run:
 
-```
+```bash
 ./scripts/record_sss_data.sh
 ```
 
 This script builds the workspace, publishes the CSV logs as proper ROS 2 hardware topics using the original timestamps, and records them into a ROS 2 bag. Once this conversion step is complete, you simply run the standard pipeline shown above and process the generated bag like any other ROS 2 dataset.
+
+If you want to enable data logging and benchmarking while running the SLAM pipeline, start it with logging enabled:
+```bash
+./scripts/start_sss_slam.sh --LOG=true
+```
+This activates internal estimator logging (e.g. state estimate NIS, residuals, benchmark metrics) for post run analysis. If the flag is not provided, the system runs in normal mode without extra debug or benchmark logging.
 
 ## 2) Online (Real Vehicle)
 
@@ -94,7 +100,7 @@ This node preserves the original UNIX timestamps from the logs, publishes at rea
 
 ```
 /hardware/imu               [sensor_msgs/Imu]
-/hardware/depth             [std_msgs/Float64]
+/hardware/depth             [geometry_msgs/PointStamped]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
 

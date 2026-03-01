@@ -14,6 +14,7 @@ class INERTIAL_NAVIGATION:
     :arg imu_freq: IMU frequency (Hz).
     r"""
 
+    # NOTE: Use accurate "g" for better precision
     g = np.array([0, 0, -accurate_g])
     "gravity vector (m/s^2) :math:`\\mathbf{g}`."
 
