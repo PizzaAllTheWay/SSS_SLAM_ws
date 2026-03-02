@@ -86,8 +86,8 @@ class StateEstimatorNode(Node):
 
         # Initialize ROS subscribers
         self.sub_imu   = self.create_subscription(Imu         , '/hardware/imu'  , self.imu_callback  , 1)
-        self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
-        self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
+        #! Disabled for now self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
+        #! Diabled for now self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
 
         # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
@@ -350,7 +350,7 @@ class StateEstimatorNode(Node):
 
         # ? Try experimental DVL method
         vel_enu = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z])
-        vel_ned = self.R_imu_to_ned @ vel_enu
+        vel_ned = self.R_body_to_dvl @ vel_enu
         y = vel_ned
 
         self.get_logger().info(f"[DVL] z:          {y}")

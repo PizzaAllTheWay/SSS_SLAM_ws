@@ -27,4 +27,4 @@
       # Measurement noise standard deviation [m/s]
       # DUNE simulation ~0.002 m/s
       # Start slightly conservative.
-      std: 0.003
+      std: 0.1

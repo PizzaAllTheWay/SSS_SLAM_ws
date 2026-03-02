@@ -16,7 +16,7 @@
       #   yaw   = π/2
       #
       # If the IMU mounting changes, update these values.
-      orientation: [3.141592653589793, 0.0, 1.5707963267948966]
+      orientation: [0.0, 0.0, 0.0] # ! Perfect for Orientation
 
       # Sampling frequency for IMU data
       freq: 50 # Hz

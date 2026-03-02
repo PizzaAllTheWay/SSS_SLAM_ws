@@ -336,13 +336,13 @@ class SSSDataExtract:
         # p (roll rate), q (pitch rate), r (yaw rate),
         # u (surge), v (sway), w (heave),
         # bias_psi (yaw bias), bias_r (yaw rate bias)
-        x = float(est_row[3])
-        y = float(est_row[4])
-        z = float(est_row[5])
+        x = float(est_row[6])
+        y = float(est_row[7])
+        z = float(est_row[8])
 
-        roll  = float(est_row[6])   # phi
-        pitch = float(est_row[7])   # theta
-        yaw   = float(est_row[8])   # psi
+        roll  = float(est_row[9])    # phi
+        pitch = float(est_row[10])   # theta
+        yaw   = float(est_row[11])   # psi
 
         x_vel = float(est_row[12])   # u (body x)
         y_vel = float(est_row[13])   # v (body y)

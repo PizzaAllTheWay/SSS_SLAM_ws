@@ -22,13 +22,6 @@ class SSSDataNode(Node):
     def __init__(self):
         # Initialize ROS node
         super().__init__("sss_data_node")
-
-        # Get ROS params
-        self.declare_parameter("benchmark.orientation", [0.0, 0.0, 0.0])
-
-        bench_orientation = self.get_parameter("benchmark.orientation").get_parameter_value().double_array_value
-
-        self.R_bench_to_ned = transform.Rotation.from_euler('xyz', bench_orientation).as_matrix()
         
         # Specify path to CSV data -----
         pkg_share = Path(get_package_share_directory("sss_data"))
@@ -290,8 +283,6 @@ class SSSDataNode(Node):
         self.sonar_pub.publish(msg)
 
     def publish_benchmark(self, data):
-        R = self.R_bench_to_ned
-
         msg = Odometry()
 
         sec = int(data["timestamp"])
@@ -301,34 +292,29 @@ class SSSDataNode(Node):
         msg.child_frame_id = "base_link"
 
         # Position (ENU → NED)
-        p_enu = np.array(data["position"])
-        p_ned = R @ p_enu
+        p = np.array(data["position"])
 
-        msg.pose.pose.position.x = p_ned[0]
-        msg.pose.pose.position.y = p_ned[1]
-        msg.pose.pose.position.z = p_ned[2]
+        msg.pose.pose.position.x = p[0]
+        msg.pose.pose.position.y = p[1]
+        msg.pose.pose.position.z = p[2]
 
         # Orientation (ENU → NED)
-        q_enu = transform.Rotation.from_quat(data["orientation"])
-        R_enu = q_enu.as_matrix()
-        R_ned = R @ R_enu
-        q_ned = transform.Rotation.from_matrix(R_ned).as_quat()
+        q = np.array(data["orientation"])
 
-        msg.pose.pose.orientation.x = q_ned[0]
-        msg.pose.pose.orientation.y = q_ned[1]
-        msg.pose.pose.orientation.z = q_ned[2]
-        msg.pose.pose.orientation.w = q_ned[3]
+        msg.pose.pose.orientation.x = q[0]
+        msg.pose.pose.orientation.y = q[1]
+        msg.pose.pose.orientation.z = q[2]
+        msg.pose.pose.orientation.w = q[3]
 
         # Pose Covariances
         msg.pose.covariance = data["pose_covariance"]
 
         # Twist
-        v_enu = np.array(data["lin_vel"])
-        v_ned = R @ v_enu
+        v = np.array(data["lin_vel"])
 
-        msg.twist.twist.linear.x = v_ned[0]
-        msg.twist.twist.linear.y = v_ned[1]
-        msg.twist.twist.linear.z = v_ned[2]
+        msg.twist.twist.linear.x = v[0]
+        msg.twist.twist.linear.y = v[1]
+        msg.twist.twist.linear.z = v[2]
 
         # Twist Covariances
         msg.twist.covariance = data["twist_covariance"]
