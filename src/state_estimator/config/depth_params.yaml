@@ -1,5 +1,5 @@
 /**:
   ros__parameters:
     depth:
-      std: 0.01
+      std: 0.5
         

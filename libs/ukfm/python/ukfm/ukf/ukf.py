@@ -202,7 +202,6 @@ class UKF:
 
         # NOTE: Store innovation statistics for NIS
         self.S = P_yy
-        self.y_bar = y_bar
         self.innovation = y - y_bar
 
 
@@ -484,6 +483,11 @@ class JUKF:
         r"""
 
         S = self.H.dot(self.P).dot(self.H.T) + self.R
+
+        # NOTE: store innovation statistics BEFORE reset
+        self.S = S
+        self.innovation = self.r.copy()
+
         # gain matrix
         K = np.linalg.solve(S, self.P.dot(self.H.T).T).T
 

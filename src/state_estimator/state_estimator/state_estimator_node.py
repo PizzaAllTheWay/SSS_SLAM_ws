@@ -6,19 +6,77 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import PointStamped
+from marine_acoustic_msgs.msg import Dvl
 from nav_msgs.msg import Odometry
 
-from ukfm.ukf.ukf import UKF
+from ukfm.ukf.ukf import JUKF
 from ukfm.model.inertial_navigation import INERTIAL_NAVIGATION as MODEL
 
-from state_estimator.utils import BenchmarkLogger, NISAHRSLogger, StateEstimateLogger
+from state_estimator.utils import (
+    BenchmarkLogger, 
+    NISLogger, 
+    StateEstimateLogger
+)
 
 
 
 class StateEstimatorNode(Node):
     # Aiding Measurement State Transforms (START) --------------------------------------------------
-    def h_orientation(self, state: MODEL.STATE):
+    def h_ahrs(self, state: MODEL.STATE):
+        # Siple as AHRS is IMU and IMU is body state so no complex transforms
+        # State is in Rotation matrix
+        # Meanwhile AHRS gives Rotation vector/quaternion
+        # SO only need to convert rotation matrix to rotation vector/quaternion
         return transform.Rotation.from_matrix(state.Rot).as_rotvec()
+    
+    def h_depth(self, state: MODEL.STATE):
+        # Siple as AHRS is IMU and IMU is body state so no complex transforms
+        return np.array([state.p[2]])
+    
+    def h_dvl(self, state: MODEL.STATE):
+        """
+        DVL MEASUREMENT MODEL
+
+        The DVL does NOT measure velocity at the vehicle center of gravity (CoG).
+        It measures the linear velocity at the DVL sensor head, which is mounted
+        with a lever arm offset from the CoG.
+
+        Rigid body kinematics:
+
+            v_sensor = v_cog + ω x r
+
+        where:
+            v_cog   = linear velocity of CoG (body frame)
+            ω       = angular velocity (body frame)
+            r       = lever arm from CoG to DVL (body frame)
+            ω x r   = additional linear velocity caused by rotation
+
+        After computing velocity in body frame, we rotate it into the DVL frame
+        because the DVL reports velocity expressed in its own sensor frame.
+        """
+        # Velocity of CoG in body frame
+        v_body = state.v
+
+        # Angular velocity in body frame
+        omega_body = self.omega.gyro
+
+        # Lever arm from CoG to DVL (body frame)
+        r_body = self.r_body_to_dvl
+
+        # Rigid body velocity relation
+        v_sensor_body = v_body + np.cross(omega_body, r_body)
+
+        # Convert body → DVL frame
+        v_sensor_dvl = self.R_body_to_dvl @ v_sensor_body
+
+        #!return v_sensor_dvl
+
+        #! Better but wrong!
+        #v_ned = state.Rot @ state.v
+        #return v_ned
+    
+        
+        return state.v
     # Aiding Measurement State Transforms (STOP) --------------------------------------------------
 
     # INITIALIZE (START) --------------------------------------------------
@@ -29,6 +87,7 @@ class StateEstimatorNode(Node):
         # Initialize ROS subscribers
         self.sub_imu   = self.create_subscription(Imu         , '/hardware/imu'  , self.imu_callback  , 1)
         self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
+        self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
 
         # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
@@ -40,7 +99,12 @@ class StateEstimatorNode(Node):
         self.declare_parameter("imu.acc.std"    , 0.0)
         self.declare_parameter("imu.gyro.std"   , 0.0)
         self.declare_parameter("imu.ahrs.std"   , 0.0)
-        self.declare_parameter("ukfm.P_0", [0.0]*9)
+        self.declare_parameter("depth.std", 0.0)
+        self.declare_parameter("dvl.orientation", [0.0, 0.0, 0.0])
+        self.declare_parameter("dvl.position"   , [0.0, 0.0, 0.0])
+        self.declare_parameter("dvl.std"        , 0.0)
+        self.declare_parameter("ukfm.P_0"  , [0.0]*9)
+        self.declare_parameter("ukfm.alpha", [0.0]*5)
 
         self.LOG = self.get_parameter("log").value # An extra flag you can set to enable loging of data for debugging and analysis of the filter
         imu_orientation = self.get_parameter("imu.orientation").get_parameter_value().double_array_value
@@ -48,7 +112,12 @@ class StateEstimatorNode(Node):
         imu_acc_std     = self.get_parameter("imu.acc.std").get_parameter_value().double_value
         imu_gyro_std    = self.get_parameter("imu.gyro.std").get_parameter_value().double_value
         imu_ahrs_std    = self.get_parameter("imu.ahrs.std").get_parameter_value().double_value
-        P_0 = self.get_parameter("ukfm.P_0").get_parameter_value().double_array_value
+        depth_std = self.get_parameter("depth.std").get_parameter_value().double_value
+        dvl_orientation = self.get_parameter("dvl.orientation").get_parameter_value().double_array_value
+        dvl_position    = self.get_parameter("dvl.position").get_parameter_value().double_array_value
+        dvl_std         = self.get_parameter("dvl.std").get_parameter_value().double_value
+        P_0   = self.get_parameter("ukfm.P_0").get_parameter_value().double_array_value
+        alpha = self.get_parameter("ukfm.alpha").get_parameter_value().double_array_value
         
         self.get_logger().info(f"log: {self.LOG}")
         self.get_logger().info(f"imu.orientation: {imu_orientation}")
@@ -56,14 +125,24 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"imu.acc.std:     {imu_acc_std}")
         self.get_logger().info(f"imu.gyro.std:    {imu_gyro_std}")
         self.get_logger().info(f"imu.ahrs.std:    {imu_ahrs_std}")
-        self.get_logger().info(f"ukfm.P_0: {P_0}")
-
-        # UKF model
-        self.model = MODEL(T=1, imu_freq=imu_freq)  # T dummy (not used online)
+        self.get_logger().info(f"depth.std: {depth_std}")
+        self.get_logger().info(f"dvl.orientation: {dvl_orientation}")
+        self.get_logger().info(f"dvl.position:    {dvl_position}")
+        self.get_logger().info(f"dvl.std:         {dvl_std}")
+        self.get_logger().info(f"ukfm.P_0:   {P_0}")
+        self.get_logger().info(f"ukfm.alpha: {alpha}")
 
         # Initialize location of sensors
         self.R_imu_to_ned = transform.Rotation.from_euler('xyz', imu_orientation).as_matrix()
         self.get_logger().info(f"R_imu_to_ned:\n{np.array2string(self.R_imu_to_ned, precision=3, suppress_small=True)}")
+
+        self.R_body_to_dvl = transform.Rotation.from_euler('xyz', dvl_orientation).as_matrix()
+        self.get_logger().info(f"R_body_to_dvl:\n{np.array2string(self.R_body_to_dvl, precision=3, suppress_small=True)}")
+        self.r_body_to_dvl = np.array(dvl_position, dtype=float)
+        self.get_logger().info(f"r_body_to_dvl:\n{np.array2string(self.r_body_to_dvl, precision=3, suppress_small=True)}")
+
+        # UKF model
+        self.model = MODEL(T=1, imu_freq=imu_freq)  # T dummy (not used online)
 
         # Initialize state
         Rot0 = np.eye(3)
@@ -73,6 +152,12 @@ class StateEstimatorNode(Node):
         state0 = self.model.STATE(Rot=Rot0, v=v0, p=p0)
 
         P_0_matrix = np.diag(P_0)
+        
+        # This is used as model input to propagate state through time
+        self.omega = self.model.INPUT(
+            gyro=np.zeros(3),
+            acc=np.zeros(3)
+        ) 
 
         # Initialize process noise
         Q = np.diag([
@@ -81,19 +166,24 @@ class StateEstimatorNode(Node):
         ])
 
         # Initialize aiding measurement noise
-        self.R_ahrs = imu_ahrs_std**2 * np.eye(3)
-
+        self.R_ahrs  = imu_ahrs_std**2 * np.eye(3)
+        self.R_depth =    depth_std**2 * np.eye(1)
+        self.R_dvl   =      dvl_std**2 * np.eye(3)
+        
         # Initialize filter
-        self.ukf = UKF(
+        self.ukf = JUKF(
+            f=self.model.f,
+            h=self.h_ahrs,  # default measurement model (can be changed before each update)
+            phi=self.model.phi,
+            Q=Q,
+            alpha=alpha,
             state0=state0,
             P0=P_0_matrix,
-            f=self.model.f,
-            h=self.h_orientation,
-            Q=Q,
-            R=self.R_ahrs,
-            phi=self.model.phi,
-            phi_inv=self.model.phi_inv,
-            alpha=np.ones(9) * 1e-3
+            red_phi=self.model.phi,
+            red_phi_inv=self.model.phi_inv,
+            red_idxs=np.arange(9), # indices of state used during propagation (all 9 states propagate)
+            up_phi=self.model.phi,
+            up_idxs=np.arange(9) # indices of state allowed to be corrected during update (all 9 states updated)
         )
 
         # For tracking time so filter can propagate through time accurately
@@ -105,7 +195,9 @@ class StateEstimatorNode(Node):
         if self.LOG:
             self.state_estimate_logger = StateEstimateLogger()
 
-            self.nis_ahrs_logger = NISAHRSLogger()
+            self.nis_ahrs_logger  = NISLogger(datafile_name="ahrs")
+            self.nis_depth_logger = NISLogger(datafile_name="depth")
+            self.nis_dvl_logger   = NISLogger(datafile_name="dvl")
 
             self.benchmark_logger = BenchmarkLogger()
             self.sub_benchmark = self.create_subscription(Odometry, '/benchmark/state_estimate', self.benchmark_callback, 1)
@@ -120,6 +212,10 @@ class StateEstimatorNode(Node):
         # So we just record the time stamp and next time we get a new IMU data package we can finally start processing
         if self.last_time is None:
             self.last_time = t
+            return
+        
+        # Check for time corruption to ensure that doesn't happen
+        if t <= self.last_time:
             return
 
         # Get the time difference between last IMU data package and now
@@ -143,10 +239,10 @@ class StateEstimatorNode(Node):
         acc  = self.R_imu_to_ned @ acc
 
         # Set up the input data structure that will propagate IMU data through the filter
-        omega = self.model.INPUT(gyro=gyro, acc=acc)
+        self.omega = self.model.INPUT(gyro=gyro, acc=acc)
 
         # Propagate IMU data
-        self.ukf.propagation(omega, dt)
+        self.ukf.propagation(self.omega, dt)
 
         # Format ROS AHRS data to be in same format as the filter wants
         # Important to translate form IMU to NED frame before passing down the values because filter lives in NED and IMU lives in ENU
@@ -161,7 +257,8 @@ class StateEstimatorNode(Node):
 
         # AHRS update (orientation)
         y = transform.Rotation.from_matrix(R_meas).as_rotvec()
-        self.ukf.update(y)
+        self.ukf.h = self.h_ahrs
+        self.ukf.update(y, self.R_ahrs)
 
         # Publish state estimate
         self.publish_state_estimate(msg.header)
@@ -173,12 +270,105 @@ class StateEstimatorNode(Node):
             nis_ahrs = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_ahrs_log_data(t, nis_ahrs)
 
-            self.get_logger().info(f"[DEBUG] innovation: \n {innovation}")
-            self.get_logger().info(f"[DEBUG] S: \n {S}")
-            self.get_logger().info(f"[DEBUG] NIS: \n {nis_ahrs}")
-
     def depth_callback(self, msg: PointStamped):
-        pass
+        # Convert ROS time data structure to readable time in precise seconds
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+        # Usually IMU will get the first time stamp but just in case this is here to prevent edge cases and ensures we gave a time stamp
+        if self.last_time is None:
+            self.last_time = t
+            return
+        
+        # Check for time corruption to ensure that doesn't happen
+        if t <= self.last_time:
+            return
+
+        # Get the time difference between last filter update and now
+        dt = t - self.last_time
+        self.last_time = t
+
+        # Propagate state between aiding measurement time and latest IMU data
+        self.ukf.propagation(self.omega, dt)
+
+        # Format ROS depth data to be in same format as the filter wants
+        depth_meas = np.array([msg.point.z])
+
+        # Depth update
+        y = depth_meas
+        self.ukf.h = self.h_depth
+        self.ukf.update(y, self.R_depth)
+
+        # Publish state estimate
+        self.publish_state_estimate(msg.header)
+
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            innovation = self.ukf.innovation
+            S = self.ukf.S
+            nis_depth = float(innovation.T @ np.linalg.solve(S, innovation))
+            self.nis_depth_log_data(t, nis_depth)
+
+    def dvl_callback(self, msg: Dvl):
+        # Before anything we must ensure DVL data is correct and what we want as it sends out different data at different times
+        # Only use bottom track velocity (ignore water track or invalid modes)
+        # In addition ensure beams are valid
+        if msg.velocity_mode != Dvl.DVL_MODE_BOTTOM:
+            return
+        if not msg.beam_velocities_valid:
+            return
+    
+        # Convert ROS time data structure to readable time in precise seconds
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+        # Usually IMU will get the first time stamp but just in case this is here to prevent edge cases and ensures we gave a time stamp
+        if self.last_time is None:
+            self.last_time = t
+            return
+        
+        # Check for time corruption to ensure that doesn't happen
+        if t <= self.last_time:
+            return
+
+        # Get the time difference between last filter update and now
+        dt = t - self.last_time
+        self.last_time = t
+
+        # Propagate state between aiding measurement time and latest IMU data
+        self.ukf.propagation(self.omega, dt)
+
+        # Extract measured velocity (already in DVL frame)
+        vel_meas = np.array([
+            msg.velocity.x,
+            msg.velocity.y,
+            msg.velocity.z
+        ])
+
+        self.get_logger().info(f"[DVL] z_est:      {self.h_dvl(self.ukf.state)}")
+
+        # DVL update
+        # ? y = vel_meas
+
+        # ? Try experimental DVL method
+        vel_enu = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z])
+        vel_ned = self.R_imu_to_ned @ vel_enu
+        y = vel_ned
+
+        self.get_logger().info(f"[DVL] z:          {y}")
+
+        self.ukf.h = self.h_dvl
+        self.ukf.update(y, self.R_dvl)
+
+        # Publish estimate
+        self.publish_state_estimate(msg.header)
+
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            innovation = self.ukf.innovation
+            S = self.ukf.S
+            nis_dvl = float(innovation.T @ np.linalg.solve(S, innovation))
+            self.nis_dvl_log_data(t, nis_dvl)
+
+            self.get_logger().info(f"[DVL] innovation: {innovation}")
 
     # This callback will only work in if the "log" flag is set
     def benchmark_callback(self, msg: Odometry):
@@ -313,13 +503,29 @@ class StateEstimatorNode(Node):
 
         self.state_estimate_logger.log(data)
 
-    def nis_ahrs_log_data(self, t: float, nis_ahrs: float):
+    def nis_ahrs_log_data(self, t: float, nis: float):
         data = {
             "t": t,
-            "nis_ahrs": nis_ahrs,
+            "nis": nis,
         }
 
         self.nis_ahrs_logger.log(data)
+
+    def nis_depth_log_data(self, t: float, nis: float):
+        data = {
+            "t": t,
+            "nis": nis,
+        }
+
+        self.nis_depth_logger.log(data)  
+
+    def nis_dvl_log_data(self, t: float, nis: float):
+        data = {
+            "t": t,
+            "nis": nis,
+        }
+
+        self.nis_dvl_logger.log(data)    
 
     def benchmark_log_data(self, msg: Odometry):
         # Time

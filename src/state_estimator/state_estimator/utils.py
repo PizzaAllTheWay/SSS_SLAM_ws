@@ -32,19 +32,19 @@ class StateEstimateLogger:
     def close(self):
         self.file.close()
 
-class NISAHRSLogger:
+class NISLogger:
     HEADER = [
         "t",
-        "nis_ahrs"
+        "nis"
     ]
 
-    def __init__(self):
+    def __init__(self, datafile_name):
         ws_root = os.getcwd()
         log_dir = os.path.join(ws_root, "src/state_estimator/logs/data")
         os.makedirs(log_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.filepath = os.path.join(log_dir, f"nis_ahrs_{timestamp}.csv")
+        self.filepath = os.path.join(log_dir, f"nis_{datafile_name}_{timestamp}.csv")
 
         self.file = open(self.filepath, "w", newline="")
         self.writer = csv.writer(self.file)

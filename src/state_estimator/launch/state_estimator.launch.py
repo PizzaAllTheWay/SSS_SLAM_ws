@@ -8,8 +8,10 @@ import os
 def generate_launch_description():
     pkg_share = get_package_share_directory('state_estimator')
 
-    imu_config = os.path.join(pkg_share, 'config', 'imu_params.yaml')
-    ukfm_config = os.path.join(pkg_share, 'config', 'ukfm_params.yaml')
+    imu_config   = os.path.join(pkg_share, 'config', 'imu_params.yaml')
+    depth_config = os.path.join(pkg_share, 'config', 'depth_params.yaml')
+    dvl_config   = os.path.join(pkg_share, 'config', 'dvl_params.yaml')
+    ukfm_config  = os.path.join(pkg_share, 'config', 'ukfm_params.yaml')
 
     log_arg = DeclareLaunchArgument(
         'log',
@@ -25,6 +27,8 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 imu_config,
+                depth_config,
+                dvl_config,
                 ukfm_config,
                 {'log': LaunchConfiguration('log')}
             ]
