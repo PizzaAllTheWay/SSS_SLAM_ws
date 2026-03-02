@@ -4,6 +4,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import PointStamped
 from marine_acoustic_msgs.msg import Dvl, RawSonarImage, SonarImageData
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from nav_msgs.msg import Odometry
 from builtin_interfaces.msg import Time
 from ament_index_python.packages import get_package_share_directory
@@ -33,6 +34,7 @@ class SSSDataNode(Node):
         self.depth_pub = self.create_publisher(PointStamped,  "/hardware/depth",           10)
         self.dvl_pub   = self.create_publisher(Dvl,           "/hardware/dvl",             10)
         self.sonar_pub = self.create_publisher(RawSonarImage, "/hardware/side_scan_sonar", 10)
+        self.gps_pub   = self.create_publisher(NavSatFix,     "/hardware/gps",             10)
 
         self.benchmark_pub = self.create_publisher(Odometry, "/benchmark/state_estimate", 10)
 
@@ -44,6 +46,7 @@ class SSSDataNode(Node):
         self.next_dvl_vel_g       = self.extractor.get_next_dvl_velocity_ground()
         self.next_dvl_range       = self.extractor.get_next_dvl_range()
         self.next_dvl_speed_sound = self.extractor.get_next_dvl_speed_sound()
+        self.next_gps             = self.extractor.get_next_gps()
         self.next_sonar           = self.extractor.get_next_sonar()
 
         self.next_benchmark = self.extractor.get_next_benchmark_state_estimate()
@@ -54,6 +57,7 @@ class SSSDataNode(Node):
         self.dvl_vel_g_timer       = self.create_timer(0.001,   self.dvl_vel_g_loop)
         self.dvl_range_timer       = self.create_timer(0.001,   self.dvl_range_loop)
         self.dvl_speed_sound_timer = self.create_timer(0.001,   self.dvl_speed_sound_loop)
+        self.gps_timer             = self.create_timer(0.001,   self.gps_loop)
         self.sonar_timer           = self.create_timer(0.001,   self.sonar_loop)
 
         self.benchmark_timer = self.create_timer(0.00001, self.benchmark_loop)
@@ -145,6 +149,19 @@ class SSSDataNode(Node):
 
         self.publish_dvl(self.next_dvl_speed_sound, dvl_flags)
         self.next_dvl_speed_sound = self.extractor.get_next_dvl_speed_sound()
+    
+    def gps_loop(self):
+        if self.next_gps is None:
+            self.gps_timer.cancel()
+            self.check_shutdown()
+            return
+
+        elapsed = time.time() - self.start_wall
+        if elapsed < self.next_gps["t"]:
+            return
+
+        self.publish_gps(self.next_gps)
+        self.next_gps = self.extractor.get_next_gps()
 
     def sonar_loop(self):
         if self.next_sonar is None:
@@ -256,6 +273,26 @@ class SSSDataNode(Node):
         msg.range = data["range"]
 
         self.dvl_pub.publish(msg)
+
+    def publish_gps(self, data):
+        msg = NavSatFix()
+
+        sec = int(data["timestamp"])
+        nanosec = int((data["timestamp"] - sec) * 1e9)
+        msg.header.stamp = Time(sec=sec, nanosec=nanosec)
+        msg.header.frame_id = "gps_link"
+
+        msg.status.status = NavSatStatus.STATUS_FIX
+        msg.status.service = NavSatStatus.SERVICE_GPS
+
+        msg.latitude  = data["latitude"]
+        msg.longitude = data["longitude"]
+        msg.altitude  = data["altitude"]
+
+        msg.position_covariance = data["position_covariance"]
+        msg.position_covariance_type = data["position_covariance_type"]
+
+        self.gps_pub.publish(msg)
 
     def publish_sonar(self, data):
         msg = RawSonarImage()

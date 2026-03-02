@@ -32,6 +32,7 @@ Other dependencies are standard ROS 2 messages (preinstalled).
 /hardware/imu               [sensor_msgs/Imu]
 /hardware/depth             [geometry_msgs/PointStamped]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
+/hardware/gps               [sensor_msgs/NavSatFix]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
 
 /benchmark/state_estimate [nav_msgs/Odometry]
@@ -41,6 +42,7 @@ Other dependencies are standard ROS 2 messages (preinstalled).
 
 ## Topic Content Summary
 **/hardware/imu** — `sensor_msgs/Imu`
+
 IMU data from Microstrain 3DM-GX4 AHRS.
 
 * Orientation quaternion computed from roll/pitch/yaw (AHRS output)
@@ -50,12 +52,14 @@ IMU data from Microstrain 3DM-GX4 AHRS.
 * No covariance fields filled (can be added from Navigation.AUV.Navigation config if needed)
 
 **/hardware/depth** — `geometry_msgs/PointStamped`
+
 Depth in meters derived from Keller-33x pressure sensor.
 
 * Raw depth only
 * No variance included (Navigation config suggests ~0.05 m in simulation)
 
 **/hardware/dvl** — `marine_acoustic_msgs/Dvl`
+
 Nortek DVL 1 MHz bottom-track mode.
 
 * 3D bottom velocity (m/s)
@@ -65,7 +69,26 @@ Nortek DVL 1 MHz bottom-track mode.
 * No beam-level velocities exposed
 * Covariance not set (Navigation config shows DVL process noise on order 5e-5 to 5e-3)
 
+**/hardware/gps** — `sensor_msgs/NavSatFix`
+
+Standalone GNSS fixes replayed from onboard logs.
+
+* Latitude and longitude converted from radians → degrees (WGS84)
+* Altitude from logged ellipsoidal height (meters)
+* Only entries containing `VALID_POS` are published (invalid fixes filtered using rejection log)
+* Position covariance built from logged accuracy estimates:
+
+  * East  = hacc²
+  * North = hacc²
+  * Up    = vacc²
+* `position_covariance_type = DIAGONAL_KNOWN`
+* `status.status = STATUS_FIX`, `status.service = SERVICE_GPS`
+* Original UNIX timestamp preserved in `header.stamp`
+
+Provides absolute global position reference used for drift correction and global consistency evaluation.
+
 **/hardware/side_scan_sonar** — `marine_acoustic_msgs/RawSonarImage`
+
 DeepVision OSM2 Sidescan (SIDESCAN mode only).
 
 * Center frequency: ~640 kHz
@@ -76,6 +99,7 @@ DeepVision OSM2 Sidescan (SIDESCAN mode only).
 * No beam geometry or TVG applied in node (raw intensity replay)
 
 **/benchmark/state_estimate** — `nav_msgs/Odometry`
+
 Onboard navigation (INS) solution replayed for benchmarking and validation purposes only.
 
 * Pose in `map` frame (x, y, z + quaternion orientation from roll/pitch/yaw)
@@ -124,6 +148,7 @@ Docs: [https://files.microstrain.com/3DM-GX4-25_User_Manual_(8500-0047).pdf](htt
 * Used for vertical constraint in navigation
 * Simulation noise (DUNE):
   * Depth std: ~0.05 m
+
 Docs: [https://www.omniinstruments.co.uk/p/keller-series-33x-pressure-transmitters/](https://www.omniinstruments.co.uk/p/keller-series-33x-pressure-transmitters/)
 
 ### DVL
@@ -137,7 +162,25 @@ Docs: [https://www.omniinstruments.co.uk/p/keller-series-33x-pressure-transmitte
 * Used as primary velocity source for dead-reckoning
 * Simulation noise (DUNE):
   * Ground velocity std: ~0.002 m/s
+
 Docs: [https://www.nortekgroup.com/products/dvl1000-6000m](https://www.nortekgroup.com/products/dvl1000-6000m)
+
+### GPS
+* Section: `Sensors.GPS`
+* Model: U-blox EVK-6H
+* Frame: Antenna frame (body-aligned reference in navigation)
+* Orientation (roll, pitch, yaw): **Not explicitly defined in config**
+* Position (lever arm in Navigation): **-0.283, 0.000, -0.287 [m]**
+* Serial Interface: `/dev/ttyACM2`, 57600 baud
+* Output: WGS84 latitude, longitude, ellipsoidal height
+* Provides: position, SOG, COG, HDOP, VDOP, HACC, VACC, satellite count
+* Update rate: ~1 Hz
+* Navigation constraints: Maximum HACC = 15 m, Maximum HDOP = 4.0, timeout = 2.5 s
+* Mode: Standalone GNSS (no RTK configured)
+* Used as absolute global position reference for navigation alignment and SLAM benchmarking
+
+Docs: [https://content.u-blox.com/sites/default/files/products/documents/EVK-6_UserGuide_%28GPS.G6-EK-10040%29.pdf](https://content.u-blox.com/sites/default/files/products/documents/EVK-6_UserGuide_%28GPS.G6-EK-10040%29.pdf)
+
 
 ### Side Scan Sonar
 * Section: `Supervisors.Delegator/Sidescan` → `Sensors.DeepVisionOSM2`
@@ -149,6 +192,7 @@ Docs: [https://www.nortekgroup.com/products/dvl1000-6000m](https://www.nortekgro
 * Range: 60 m
 * Resolution: 1000 bins per side (~6 cm slant resolution)
 * Used for seabed imaging and acoustic SLAM
+
 Docs: [https://deepvisionsonar.com/](https://deepvisionsonar.com/)
 
 ---

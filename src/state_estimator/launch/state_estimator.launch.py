@@ -11,6 +11,7 @@ def generate_launch_description():
     imu_config   = os.path.join(pkg_share, 'config', 'imu_params.yaml')
     depth_config = os.path.join(pkg_share, 'config', 'depth_params.yaml')
     dvl_config   = os.path.join(pkg_share, 'config', 'dvl_params.yaml')
+    gps_config   = os.path.join(pkg_share, 'config', 'gps_params.yaml')
     ukfm_config  = os.path.join(pkg_share, 'config', 'ukfm_params.yaml')
 
     log_arg = DeclareLaunchArgument(
@@ -29,6 +30,7 @@ def generate_launch_description():
                 imu_config,
                 depth_config,
                 dvl_config,
+                gps_config,
                 ukfm_config,
                 {'log': LaunchConfiguration('log')}
             ]

@@ -91,11 +91,6 @@ def main():
         nees_k = e.T @ np.linalg.solve(P, e)
         nees.append(nees_k)
 
-        # Debugg
-        print(f"e[{k}]: \n {e}")
-        print(f"P[{k}]: \n {P}")
-        print(f"nees[{k}]: {nees_k}")
-
     nees = np.array(nees)
 
     # ---------------- PLOT ----------------

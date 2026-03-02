@@ -102,6 +102,7 @@ This node preserves the original UNIX timestamps from the logs, publishes at rea
 /hardware/imu               [sensor_msgs/Imu]
 /hardware/depth             [geometry_msgs/PointStamped]
 /hardware/dvl               [marine_acoustic_msgs/Dvl]
+/hardware/gps               [sensor_msgs/NavSatFix]
 /hardware/side_scan_sonar   [marine_acoustic_msgs/RawSonarImage]
 
 /benchmark/state_estimate [nav_msgs/Odometry]

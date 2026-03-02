@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import numpy as np
 import scipy.spatial.transform as transform
+from pyproj import Transformer
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import PointStamped
 from marine_acoustic_msgs.msg import Dvl
+from sensor_msgs.msg import NavSatFix
 from nav_msgs.msg import Odometry
 
 from ukfm.ukf.ukf import JUKF
@@ -77,6 +79,19 @@ class StateEstimatorNode(Node):
     
         
         return state.v
+    
+    def h_gps(self, state: MODEL.STATE):
+        """
+        GPS measures position of antenna in NED.
+
+        p_gps = p_cog + R_nb @ r_body_to_gps
+        """
+        p_cog = state.p
+        R_nb = state.Rot
+        r = self.r_body_to_gps
+
+        p_gps = p_cog + R_nb @ r
+        return p_gps
     # Aiding Measurement State Transforms (STOP) --------------------------------------------------
 
     # INITIALIZE (START) --------------------------------------------------
@@ -88,6 +103,7 @@ class StateEstimatorNode(Node):
         self.sub_imu   = self.create_subscription(Imu         , '/hardware/imu'  , self.imu_callback  , 1)
         self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
         self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
+        self.sub_dvl   = self.create_subscription(NavSatFix   , '/hardware/gps'  , self.gps_callback  , 1)
 
         # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
@@ -103,6 +119,8 @@ class StateEstimatorNode(Node):
         self.declare_parameter("dvl.orientation", [0.0, 0.0, 0.0])
         self.declare_parameter("dvl.position"   , [0.0, 0.0, 0.0])
         self.declare_parameter("dvl.std"        , 0.0)
+        self.declare_parameter("gps.frame_orientation", [0.0, 0.0, 0.0])
+        self.declare_parameter("gps.position"         , [0.0, 0.0, 0.0])
         self.declare_parameter("ukfm.P_0"  , [0.0]*9)
         self.declare_parameter("ukfm.alpha", [0.0]*5)
 
@@ -116,6 +134,8 @@ class StateEstimatorNode(Node):
         dvl_orientation = self.get_parameter("dvl.orientation").get_parameter_value().double_array_value
         dvl_position    = self.get_parameter("dvl.position").get_parameter_value().double_array_value
         dvl_std         = self.get_parameter("dvl.std").get_parameter_value().double_value
+        gps_frame_orientation = self.get_parameter("gps.frame_orientation").get_parameter_value().double_array_value
+        gps_position          = self.get_parameter("gps.position").get_parameter_value().double_array_value
         P_0   = self.get_parameter("ukfm.P_0").get_parameter_value().double_array_value
         alpha = self.get_parameter("ukfm.alpha").get_parameter_value().double_array_value
         
@@ -129,6 +149,8 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"dvl.orientation: {dvl_orientation}")
         self.get_logger().info(f"dvl.position:    {dvl_position}")
         self.get_logger().info(f"dvl.std:         {dvl_std}")
+        self.get_logger().info(f"gps.frame_orientation: {gps_frame_orientation}")
+        self.get_logger().info(f"gps.position:          {gps_position}")
         self.get_logger().info(f"ukfm.P_0:   {P_0}")
         self.get_logger().info(f"ukfm.alpha: {alpha}")
 
@@ -140,6 +162,11 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"R_body_to_dvl:\n{np.array2string(self.R_body_to_dvl, precision=3, suppress_small=True)}")
         self.r_body_to_dvl = np.array(dvl_position, dtype=float)
         self.get_logger().info(f"r_body_to_dvl:\n{np.array2string(self.r_body_to_dvl, precision=3, suppress_small=True)}")
+
+        self.R_gps_frame_orientation = transform.Rotation.from_euler('xyz', gps_frame_orientation).as_matrix()
+        self.get_logger().info(f"R_gps_frame_orientation:\n{np.array2string(self.R_gps_frame_orientation, precision=3, suppress_small=True)}")
+        self.r_body_to_gps = np.array(gps_position, dtype=float)
+        self.get_logger().info(f"gps_position:\n{np.array2string(self.r_body_to_gps, precision=3, suppress_small=True)}")
 
         # UKF model
         self.model = MODEL(T=1, imu_freq=imu_freq)  # T dummy (not used online)
@@ -189,6 +216,9 @@ class StateEstimatorNode(Node):
         # For tracking time so filter can propagate through time accurately
         self.last_time = None
 
+        # For GNSS reference setup
+        self.gps_ref_set = False
+
         # This part is purely for logging and debugging
         # If Logging flag is enabled we add a logger for post processing purposes
         # Then we can analyze data later down the line to debug state estimator
@@ -198,6 +228,7 @@ class StateEstimatorNode(Node):
             self.nis_ahrs_logger  = NISLogger(datafile_name="ahrs")
             self.nis_depth_logger = NISLogger(datafile_name="depth")
             self.nis_dvl_logger   = NISLogger(datafile_name="dvl")
+            self.nis_gps_logger   = NISLogger(datafile_name="gps")
 
             self.benchmark_logger = BenchmarkLogger()
             self.sub_benchmark = self.create_subscription(Odometry, '/benchmark/state_estimate', self.benchmark_callback, 1)
@@ -238,20 +269,6 @@ class StateEstimatorNode(Node):
         gyro = self.R_imu_to_ned @ gyro
         acc  = self.R_imu_to_ned @ acc
 
-        #! THIS IS TESTING
-        gyro = np.array([
-            0.0, 
-            0.0, 
-            msg.angular_velocity.z
-        ])
-        acc = np.array([
-            0.0,
-            0.0,
-            msg.linear_acceleration.z
-        ])
-        gyro = self.R_imu_to_ned @ gyro
-        acc  = self.R_imu_to_ned @ acc
-
         # Set up the input data structure that will propagate IMU data through the filter
         self.omega = self.model.INPUT(gyro=gyro, acc=acc)
 
@@ -267,7 +284,7 @@ class StateEstimatorNode(Node):
             msg.orientation.w
         ]).as_matrix()
 
-        #! R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
+        #!!! R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
 
         # AHRS update (orientation)
         y = transform.Rotation.from_matrix(R_meas).as_rotvec()
@@ -357,8 +374,6 @@ class StateEstimatorNode(Node):
             msg.velocity.z
         ])
 
-        self.get_logger().info(f"[DVL] z_est:      {self.h_dvl(self.ukf.state)}")
-
         # DVL update
         # ! y = vel_meas
 
@@ -366,8 +381,6 @@ class StateEstimatorNode(Node):
         vel_enu = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z])
         vel_ned = self.R_body_to_dvl @ vel_enu
         y = vel_ned
-
-        self.get_logger().info(f"[DVL] z:          {y}")
 
         self.ukf.h = self.h_dvl
         self.ukf.update(y, self.R_dvl)
@@ -381,8 +394,75 @@ class StateEstimatorNode(Node):
             S = self.ukf.S
             nis_dvl = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_dvl_log_data(t, nis_dvl)
+    
+    def gps_callback(self, msg: NavSatFix):
+        # Double check that the message is valid
+        if msg.status.status < 0:
+            return
+    
+        # Convert ROS time data structure to readable time in precise seconds
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
-            self.get_logger().info(f"[DVL] innovation: {innovation}")
+        # Usually IMU will get the first time stamp but just in case this is here to prevent edge cases and ensures we gave a time stamp
+        if self.last_time is None:
+            self.last_time = t
+            return
+        
+        # Check for time corruption to ensure that doesn't happen
+        if t <= self.last_time:
+            return
+
+        # Get the time difference between last filter update and now
+        dt = t - self.last_time
+        self.last_time = t
+
+        # Propagate state between aiding measurement time and latest IMU data
+        self.ukf.propagation(self.omega, dt)
+
+        # Extract measured position
+        # Convert from WGS84 -> ECF -> ENU -> NED format
+        lat = msg.latitude
+        lon = msg.longitude
+        h   = msg.altitude
+
+        # Create once at first fix
+        if not self.gps_ref_set:
+            self.transformer = Transformer.from_crs("EPSG:4326", "EPSG:4978", always_xy=True)
+            self.east0, self.north0, self.up0 = self.transformer.transform(lon, lat, h)
+            self.gps_ref_set = True
+
+        # WGS84 → ENU (topocentric gives ENU directly)
+        east, north, up = self.transformer.transform(lon, lat, h)
+        east  -= self.east0
+        north -= self.north0
+        up    -= self.up0
+
+        # ENU → NED
+        p_ned = np.array([north, east, -up])
+
+        # Covariance ENU → NED
+        cov = np.array(msg.position_covariance).reshape(3, 3)
+        T = self.R_gps_frame_orientation
+        R_gps = T @ cov @ T.T
+
+        # GPS update
+        y = p_ned
+        self.ukf.h = self.h_gps
+        self.ukf.update(y, R_gps)
+
+        # Publish estimate
+        self.publish_state_estimate(msg.header)
+
+        #! DEBUG
+        self.get_logger().info(f"[GPS] gps_pose:      {y}")
+        self.get_logger().info(f"[GPS] pose_estimate: {self.ukf.state.p}")
+
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            innovation = self.ukf.innovation
+            S = self.ukf.S
+            nis_gps = float(innovation.T @ np.linalg.solve(S, innovation))
+            self.nis_gps_log_data(t, nis_gps)
 
     # This callback will only work in if the "log" flag is set
     def benchmark_callback(self, msg: Odometry):
@@ -539,7 +619,15 @@ class StateEstimatorNode(Node):
             "nis": nis,
         }
 
-        self.nis_dvl_logger.log(data)    
+        self.nis_dvl_logger.log(data)   
+
+    def nis_gps_log_data(self, t: float, nis: float):
+        data = {
+            "t": t,
+            "nis": nis,
+        }
+
+        self.nis_gps_logger.log(data) 
 
     def benchmark_log_data(self, msg: Odometry):
         # Time

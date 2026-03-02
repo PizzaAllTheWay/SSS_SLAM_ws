@@ -31,6 +31,12 @@ class SSSDataExtract:
         self.sound_speed_time = 0
         self.sound_speed_last = 0.0
 
+        # GPS data
+        self.gps_reader = self._open_csv("GpsFix.csv")
+        self.gps_reject_reader = self._open_csv("GpsFixRejection.csv")
+
+        self._gps_next_reject = next(self.gps_reject_reader, None)
+
         # Sonar data (Side scan sonar + Echo sounder sonar)
         self.sonar_reader = self._open_csv("SonarData.csv")
 
@@ -279,6 +285,58 @@ class SSSDataExtract:
 
             "range": [0.0]*4,
         }
+    
+    def get_next_gps(self):
+        while True:
+            row = next(self.gps_reader, None)
+            if not row:
+                return None
+
+            timestamp = float(row[0])
+
+            # Skip rejected timestamps
+            while self._gps_next_reject and float(self._gps_next_reject[0]) < timestamp:
+                self._gps_next_reject = next(self.gps_reject_reader, None)
+
+            if self._gps_next_reject and float(self._gps_next_reject[0]) == timestamp:
+                continue  # rejected → skip
+
+            # validity string must contain VALID_POS
+            validity = row[3]
+            if "VALID_POS" not in validity:
+                continue
+
+            rel_time = timestamp - self.start_time
+
+            lat_rad = float(row[9])
+            lon_rad = float(row[10])
+            height  = float(row[11])
+
+            hacc = float(row[17])
+            vacc = float(row[18])
+
+            # convert rad → degrees
+            lat_deg = math.degrees(lat_rad)
+            lon_deg = math.degrees(lon_rad)
+
+            # ENU covariance (NavSatFix expects ENU)
+            # Use horizontal accuracy for East/North, vertical for Up
+            pos_cov = [0.0] * 9
+            pos_cov[0] = hacc**2   # East
+            pos_cov[4] = hacc**2   # North
+            pos_cov[8] = vacc**2   # Up
+
+            return {
+                "t": rel_time,
+                "timestamp": timestamp,
+
+                "latitude": lat_deg,
+                "longitude": lon_deg,
+                "altitude": height,
+
+                "position_covariance": pos_cov,
+                "position_covariance_type": 2,  # DIAGONAL_KNOWN
+            }
     
     def get_next_sonar(self):
         # Keep reading until we find a SIDESCAN entry
