@@ -86,8 +86,8 @@ class StateEstimatorNode(Node):
 
         # Initialize ROS subscribers
         self.sub_imu   = self.create_subscription(Imu         , '/hardware/imu'  , self.imu_callback  , 1)
-        #! Disabled for now self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
-        #! Diabled for now self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
+        self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
+        self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
 
         # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
@@ -238,6 +238,20 @@ class StateEstimatorNode(Node):
         gyro = self.R_imu_to_ned @ gyro
         acc  = self.R_imu_to_ned @ acc
 
+        #! THIS IS TESTING
+        gyro = np.array([
+            0.0, 
+            0.0, 
+            msg.angular_velocity.z
+        ])
+        acc = np.array([
+            0.0,
+            0.0,
+            msg.linear_acceleration.z
+        ])
+        gyro = self.R_imu_to_ned @ gyro
+        acc  = self.R_imu_to_ned @ acc
+
         # Set up the input data structure that will propagate IMU data through the filter
         self.omega = self.model.INPUT(gyro=gyro, acc=acc)
 
@@ -253,7 +267,7 @@ class StateEstimatorNode(Node):
             msg.orientation.w
         ]).as_matrix()
 
-        R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
+        #! R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
 
         # AHRS update (orientation)
         y = transform.Rotation.from_matrix(R_meas).as_rotvec()
@@ -346,9 +360,9 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"[DVL] z_est:      {self.h_dvl(self.ukf.state)}")
 
         # DVL update
-        # ? y = vel_meas
+        # ! y = vel_meas
 
-        # ? Try experimental DVL method
+        # ! Try experimental DVL method
         vel_enu = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z])
         vel_ned = self.R_body_to_dvl @ vel_enu
         y = vel_ned

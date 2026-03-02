@@ -25,6 +25,15 @@ def main():
     df_bench["t_rel"] = df_bench["t"] - t0_bench
     df_est["t_rel"]   = df_est["t"]   - t0_est
 
+    # Set relative xyz pose
+    x0_bench = df_bench["px"].iloc[0]
+    y0_bench = df_bench["py"].iloc[0]
+    z0_bench = df_bench["pz"].iloc[0]
+
+    df_bench["px"] = df_bench["px"] - x0_bench
+    df_bench["py"] = df_bench["py"] - y0_bench
+    df_bench["pz"] = df_bench["pz"] - z0_bench
+
     # =========================================================
     # 1) 3D TRAJECTORY
     # =========================================================

@@ -11,21 +11,22 @@
       #   - flip Z
       #
       # This is equivalent to the following Euler rotation (xyz order):
-      #   roll  = π
+      #   roll  = π = 3.14159265358
       #   pitch = 0
-      #   yaw   = π/2
+      #   yaw   = π/2 = 1.57079632679
       #
       # If the IMU mounting changes, update these values.
-      orientation: [0.0, 0.0, 0.0] # ! Perfect for Orientation
+      #!orientation: [3.14159265358, 0.0, -1.57079632679]
+      orientation: [3.14159265358, 0.0, 0.0]
 
       # Sampling frequency for IMU data
       freq: 50 # Hz
 
       acc:
-        std: 0.1
+        std: 0.5
 
       gyro:
-        std: 0.05
+        std: 0.1
 
       ahrs:
         std: 0.001
