@@ -223,6 +223,7 @@ class SSSDataExtract:
 
             # Step 7: decide how to compute altitude
             # If vertical beam exists and is valid -> use it (best)
+            num_good_beams = len(tilted_ranges)
             if vertical_altitude is not None:
                 altitude = vertical_altitude
                 num_good_beams = 1
@@ -230,10 +231,13 @@ class SSSDataExtract:
             # Otherwise, use the mean of the tilted/slant beams and convert to altitude.
             # For a 30° Janus configuration:
             # altitude = cos(30°) * mean(slant_range) = (sqrt(3)/2) * mean(slant_range)
-            else:
-                num_good_beams = len(tilted_ranges)
+            elif num_good_beams != 0:
                 mean_slant = sum(tilted_ranges) / num_good_beams
                 altitude = (math.sqrt(3) / 2.0) * mean_slant
+            
+            # Skip to next row if none of the valid conditions are met
+            else:
+                continue
 
             # tep 8: return a fully-populated dict with defaults for unused fields
             return {
