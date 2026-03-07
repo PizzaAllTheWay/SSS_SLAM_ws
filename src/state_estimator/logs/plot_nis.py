@@ -155,7 +155,7 @@ def main():
     df["t_rel"] = df["t"] - t_ref
     df = df[df["t_rel"] > ignore_seconds].reset_index(drop=True)
 
-    dof = 3  # DVL measures 3D velocity
+    dof = 2  # DVL measures 2D velocity (vx, vy)
     fig, axes = create_stacked_plot(
         1,
         title="DVL NIS Consistency Test",

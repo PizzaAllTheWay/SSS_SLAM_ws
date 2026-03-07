@@ -20,7 +20,7 @@ class DepthParams:
 @dataclass
 class DvlParams:
     std: float
-    orientation: np.ndarray   # R_body_to_dvl (3x3)
+    orientation: np.ndarray   # R_body_to_dvl (2x2)
     position: np.ndarray      # r_body_to_dvl (3)
 
 @dataclass
@@ -42,7 +42,7 @@ class MeasurementModels:
         # Measurement noise matrices
         self.R_ahrs  = params.imu.ahrs_std**2 * np.eye(3)
         self.R_depth = params.depth.std**2 * np.eye(1)
-        self.R_dvl   = params.dvl.std**2 * np.eye(3)
+        self.R_dvl   = params.dvl.std**2 * np.eye(2)
 
         # Sensor Rotations
         self.R_body_to_imu = params.imu.orientation
@@ -69,7 +69,8 @@ class MeasurementModels:
     
     def h_dvl(self, state: MODEL.STATE):
         v_body = state.v
-        z_est = self.R_body_to_dvl @ v_body
+        v_body = self.R_body_to_dvl @ v_body
+        z_est = v_body[0:2]
         return z_est
 
     def h_gps(self, state: MODEL.STATE):

@@ -333,8 +333,7 @@ class StateEstimatorNode(Node):
         # Extract measured velocity (already in DVL frame)
         vel_meas = np.array([
             msg.velocity.x,
-            msg.velocity.y,
-            msg.velocity.z
+            msg.velocity.y
         ])
 
         # DVL update
