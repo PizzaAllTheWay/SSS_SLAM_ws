@@ -25,7 +25,7 @@ class DvlParams:
 
 @dataclass
 class GpsParams:
-    orientation_fix: np.ndarray   # R_body_to_gps_frame (3x3)
+    orientation_fix: np.ndarray   # R_body_to_gps_frame (2x2)
     position: np.ndarray          # r_body_to_gps (3)
 
 @dataclass
@@ -63,13 +63,10 @@ class MeasurementModels:
         depth_state = np.array([state.p[2]])
         z_est = depth_state + self.r_body_to_depth[2]
         return z_est
-    
-    # def h_dvl(self, state: MODEL.STATE):
-    #     return state.v
-    
+
     def h_dvl(self, state: MODEL.STATE):
         v_body = state.v
-        v_body = self.R_body_to_dvl @ v_body
+        z_est = self.R_body_to_dvl @ v_body
         z_est = v_body[0:2]
         return z_est
 
@@ -78,5 +75,6 @@ class MeasurementModels:
         R_body = state.Rot
         z_est = p_body + R_body @ self.r_body_to_gps
         z_est = self.R_gps_fix @ z_est
+        z_est = z_est[0:2]
         return z_est
     # Aiding Measurement State Transforms (STOP) --------------------------------------------------

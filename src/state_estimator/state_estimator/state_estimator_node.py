@@ -395,14 +395,16 @@ class StateEstimatorNode(Node):
         north -= self.north0
         up    -= self.up0
         p_enu = np.array([north, east, up])
+        p_xy = p_enu[0:2]
 
         # Covariance reshape
         cov = np.array(msg.position_covariance).reshape(3, 3)
+        R_xy = cov[0:2, 0:2]
 
         # GPS update
-        y = p_enu
+        y = p_xy
         h = self.measurement_models.h_gps
-        R = cov
+        R = R_xy
         self.ukf.h = h
         self.ukf.update(y, R)
 

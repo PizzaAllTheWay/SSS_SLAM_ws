@@ -7,6 +7,7 @@ from utils import (
     load_csv,
     create_stacked_plot,
     add_series,
+    add_sensor_dropouts,
     add_nis_consistency_bounds,
     add_cumulative_mean,
     finalize_plot
@@ -173,6 +174,12 @@ def main():
         color="green"
     )
 
+    add_sensor_dropouts(
+        ax, 
+        df["t_rel"], 
+        threshold=10.0
+    )
+
     add_nis_consistency_bounds(
         ax,
         dof=dof,
@@ -215,7 +222,7 @@ def main():
     df["t_rel"] = df["t"] - t_ref
     df = df[df["t_rel"] > ignore_seconds].reset_index(drop=True)
 
-    dof = 3  # GPS measures 3D position (NED)
+    dof = 2  # GPS measures 2D position (ENU) (x, y)
     fig, axes = create_stacked_plot(
         1,
         title="GPS NIS Consistency Test",
@@ -231,6 +238,12 @@ def main():
         df["nis"],
         label="NIS GPS",
         color="purple"
+    )
+
+    add_sensor_dropouts(
+        ax, 
+        df["t_rel"], 
+        threshold=10.0
     )
 
     add_nis_consistency_bounds(

@@ -6,6 +6,7 @@ from utils import (
     create_stacked_plot,
     add_trajectory,
     add_series,
+    add_sensor_dropouts,
     finalize_plot
 )
 
@@ -33,6 +34,17 @@ def main():
     df_bench["px"] = df_bench["px"] - x0_bench
     df_bench["py"] = df_bench["py"] - y0_bench
     df_bench["pz"] = df_bench["pz"] - z0_bench
+
+    # Get sensor dropout data
+    dvl_file = get_newest_file(DATA_DIR, "nis_dvl")
+    gps_file = get_newest_file(DATA_DIR, "nis_gps")
+
+    df_dvl = load_csv(dvl_file)
+    df_gps = load_csv(gps_file)
+
+    t0 = df_est["t"].iloc[0]
+    df_dvl["t_rel"] = df_dvl["t"] - t0
+    df_gps["t_rel"] = df_gps["t"] - t0
 
     # =========================================================
     # 1) 3D TRAJECTORY
@@ -78,6 +90,24 @@ def main():
             color="red",
             cov=df_est[f"{axis}_cov"]
         )
+        
+        add_sensor_dropouts(
+            axes_pos[i],
+            df_dvl["t_rel"],
+            threshold=10.0,
+            color="#d8b365",   # muted amber
+            alpha=0.10,
+            label="DVL dropout"
+        )
+
+        add_sensor_dropouts(
+            axes_pos[i],
+            df_gps["t_rel"],
+            threshold=10.0,
+            color="#5ab4ac",   # muted teal
+            alpha=0.10,
+            label="GPS dropout"
+        )
 
     finalize_plot()
 
@@ -106,6 +136,24 @@ def main():
             label="UKF-M",
             color="red",
             cov=df_est[f"{axis}_cov"]
+        )
+
+        add_sensor_dropouts(
+            axes_vel[i],
+            df_dvl["t_rel"],
+            threshold=10.0,
+            color="#d8b365",   # muted amber
+            alpha=0.10,
+            label="DVL dropout"
+        )
+
+        add_sensor_dropouts(
+            axes_vel[i],
+            df_gps["t_rel"],
+            threshold=10.0,
+            color="#5ab4ac",   # muted teal
+            alpha=0.10,
+            label="GPS dropout"
         )
 
     finalize_plot()

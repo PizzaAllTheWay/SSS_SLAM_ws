@@ -21,8 +21,9 @@ def load_csv(path):
 # PLOT HELPER ----------
 def finalize_plot():
     for ax in plt.gcf().axes:
-        if ax.get_legend_handles_labels()[0]:
-            ax.legend()
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(loc="upper right")
     plt.tight_layout()
     plt.show()
 
@@ -161,3 +162,22 @@ def add_cumulative_mean(ax,
         linewidth=2.5,
         label=label
     )
+
+# SENSOR DATA VISUALIZATION ----------
+def add_sensor_dropouts(ax, t, threshold=10.0, color="gray", alpha=0.25, label="Sensor dropout"):
+    t = np.asarray(t)
+    dt = np.diff(t)
+
+    gaps = np.where(dt > threshold)[0]
+
+    label_added = False
+
+    for g in gaps:
+        t_start = t[g]
+        t_end   = t[g+1]
+
+        if not label_added:
+            ax.axvspan(t_start, t_end, color=color, alpha=alpha, label=label)
+            label_added = True
+        else:
+            ax.axvspan(t_start, t_end, color=color, alpha=alpha)
