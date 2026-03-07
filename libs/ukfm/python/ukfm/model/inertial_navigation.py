@@ -15,7 +15,7 @@ class INERTIAL_NAVIGATION:
     r"""
 
     # NOTE: Use accurate "g" for better precision
-    g = np.array([0, 0, -accurate_g])
+    g = np.array([0, 0, accurate_g])
     "gravity vector (m/s^2) :math:`\\mathbf{g}`."
 
     N_ldk = 3

@@ -1,30 +1,8 @@
 /**:
   ros__parameters:
     dvl:
-      # DVL mounting orientation (roll, pitch, yaw) in radians.
-      #
-      # Config says: 0°, -90°, 45° in body frame.
-      # Body frame: x forward, y starboard, z down (NED-style).
-      #
-      # Convert degrees → radians.
-      # roll  = 0
-      # pitch = -90°  = -1.57079632679
-      # yaw   = 45°   = 0.78539816339
-      #!orientation: [0.0, -1.5707963267948966, 0.7853981633974483]
       orientation: [0.0, 0.0, 0.0]
 
-      # Lever arm position of DVL in body frame [m]
-      # Needed because velocity at sensor ≠ velocity at CoG:
-      # v_sensor = v_cog + ω × r
-      #
-      # From config:
-      # x = 0.50 m (forward)
-      # y = 0.00 m
-      # z = 0.20 m (down)
-      #!position: [0.50, 0.0, 0.20]
-      position: [0.0, 0.0, 0.0]
+      position: [0.50, 0.0, 0.20]
 
-      # Measurement noise standard deviation [m/s]
-      # DUNE simulation ~0.002 m/s
-      # Start slightly conservative.
       std: 0.1

@@ -14,6 +14,15 @@ from nav_msgs.msg import Odometry
 from ukfm.ukf.ukf import JUKF
 from ukfm.model.inertial_navigation import INERTIAL_NAVIGATION as MODEL
 
+from state_estimator.measurement_models import (
+    ImuParams,
+    DepthParams,
+    DvlParams,
+    GpsParams,
+    SensorParams,
+    MeasurementModels,
+)
+
 from state_estimator.utils import (
     BenchmarkLogger, 
     NISLogger, 
@@ -23,77 +32,6 @@ from state_estimator.utils import (
 
 
 class StateEstimatorNode(Node):
-    # Aiding Measurement State Transforms (START) --------------------------------------------------
-    def h_ahrs(self, state: MODEL.STATE):
-        # Siple as AHRS is IMU and IMU is body state so no complex transforms
-        # State is in Rotation matrix
-        # Meanwhile AHRS gives Rotation vector/quaternion
-        # SO only need to convert rotation matrix to rotation vector/quaternion
-        return transform.Rotation.from_matrix(state.Rot).as_rotvec()
-    
-    def h_depth(self, state: MODEL.STATE):
-        # Siple as AHRS is IMU and IMU is body state so no complex transforms
-        return np.array([state.p[2]])
-    
-    def h_dvl(self, state: MODEL.STATE):
-        """
-        DVL MEASUREMENT MODEL
-
-        The DVL does NOT measure velocity at the vehicle center of gravity (CoG).
-        It measures the linear velocity at the DVL sensor head, which is mounted
-        with a lever arm offset from the CoG.
-
-        Rigid body kinematics:
-
-            v_sensor = v_cog + ω x r
-
-        where:
-            v_cog   = linear velocity of CoG (body frame)
-            ω       = angular velocity (body frame)
-            r       = lever arm from CoG to DVL (body frame)
-            ω x r   = additional linear velocity caused by rotation
-
-        After computing velocity in body frame, we rotate it into the DVL frame
-        because the DVL reports velocity expressed in its own sensor frame.
-        """
-        # Velocity of CoG in body frame
-        v_body = state.v
-
-        # Angular velocity in body frame
-        omega_body = self.omega.gyro
-
-        # Lever arm from CoG to DVL (body frame)
-        r_body = self.r_body_to_dvl
-
-        # Rigid body velocity relation
-        v_sensor_body = v_body + np.cross(omega_body, r_body)
-
-        # Convert body → DVL frame
-        v_sensor_dvl = self.R_body_to_dvl @ v_sensor_body
-
-        #!return v_sensor_dvl
-
-        #! Better but wrong!
-        #v_ned = state.Rot @ state.v
-        #return v_ned
-    
-        
-        return state.v
-    
-    def h_gps(self, state: MODEL.STATE):
-        """
-        GPS measures position of antenna in NED.
-
-        p_gps = p_cog + R_nb @ r_body_to_gps
-        """
-        p_cog = state.p
-        R_nb = state.Rot
-        r = self.r_body_to_gps
-
-        p_gps = p_cog + R_nb @ r
-        return p_gps
-    # Aiding Measurement State Transforms (STOP) --------------------------------------------------
-
     # INITIALIZE (START) --------------------------------------------------
     def __init__(self):
         # Initialize node
@@ -103,7 +41,7 @@ class StateEstimatorNode(Node):
         self.sub_imu   = self.create_subscription(Imu         , '/hardware/imu'  , self.imu_callback  , 1)
         self.sub_depth = self.create_subscription(PointStamped, '/hardware/depth', self.depth_callback, 1)
         self.sub_dvl   = self.create_subscription(Dvl         , '/hardware/dvl'  , self.dvl_callback  , 1)
-        self.sub_dvl   = self.create_subscription(NavSatFix   , '/hardware/gps'  , self.gps_callback  , 1)
+        self.sub_gps   = self.create_subscription(NavSatFix   , '/hardware/gps'  , self.gps_callback  , 1)
 
         # Initialize ROS publishers
         self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
@@ -115,7 +53,8 @@ class StateEstimatorNode(Node):
         self.declare_parameter("imu.acc.std"    , 0.0)
         self.declare_parameter("imu.gyro.std"   , 0.0)
         self.declare_parameter("imu.ahrs.std"   , 0.0)
-        self.declare_parameter("depth.std", 0.0)
+        self.declare_parameter("depth.position", [0.0, 0.0, 0.0])
+        self.declare_parameter("depth.std"     , 0.0)
         self.declare_parameter("dvl.orientation", [0.0, 0.0, 0.0])
         self.declare_parameter("dvl.position"   , [0.0, 0.0, 0.0])
         self.declare_parameter("dvl.std"        , 0.0)
@@ -130,7 +69,8 @@ class StateEstimatorNode(Node):
         imu_acc_std     = self.get_parameter("imu.acc.std").get_parameter_value().double_value
         imu_gyro_std    = self.get_parameter("imu.gyro.std").get_parameter_value().double_value
         imu_ahrs_std    = self.get_parameter("imu.ahrs.std").get_parameter_value().double_value
-        depth_std = self.get_parameter("depth.std").get_parameter_value().double_value
+        depth_position = self.get_parameter("depth.position").get_parameter_value().double_array_value
+        depth_std      = self.get_parameter("depth.std").get_parameter_value().double_value
         dvl_orientation = self.get_parameter("dvl.orientation").get_parameter_value().double_array_value
         dvl_position    = self.get_parameter("dvl.position").get_parameter_value().double_array_value
         dvl_std         = self.get_parameter("dvl.std").get_parameter_value().double_value
@@ -145,7 +85,8 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"imu.acc.std:     {imu_acc_std}")
         self.get_logger().info(f"imu.gyro.std:    {imu_gyro_std}")
         self.get_logger().info(f"imu.ahrs.std:    {imu_ahrs_std}")
-        self.get_logger().info(f"depth.std: {depth_std}")
+        self.get_logger().info(f"depth.position: {depth_position}")
+        self.get_logger().info(f"depth.std:      {depth_std}")
         self.get_logger().info(f"dvl.orientation: {dvl_orientation}")
         self.get_logger().info(f"dvl.position:    {dvl_position}")
         self.get_logger().info(f"dvl.std:         {dvl_std}")
@@ -155,18 +96,21 @@ class StateEstimatorNode(Node):
         self.get_logger().info(f"ukfm.alpha: {alpha}")
 
         # Initialize location of sensors
-        self.R_imu_to_ned = transform.Rotation.from_euler('xyz', imu_orientation).as_matrix()
-        self.get_logger().info(f"R_imu_to_ned:\n{np.array2string(self.R_imu_to_ned, precision=3, suppress_small=True)}")
+        R_body_to_imu = transform.Rotation.from_euler('xyz', imu_orientation).as_matrix()
+        self.get_logger().info(f"R_imu_to_ned:\n{np.array2string(R_body_to_imu, precision=3, suppress_small=True)}")
 
-        self.R_body_to_dvl = transform.Rotation.from_euler('xyz', dvl_orientation).as_matrix()
-        self.get_logger().info(f"R_body_to_dvl:\n{np.array2string(self.R_body_to_dvl, precision=3, suppress_small=True)}")
-        self.r_body_to_dvl = np.array(dvl_position, dtype=float)
-        self.get_logger().info(f"r_body_to_dvl:\n{np.array2string(self.r_body_to_dvl, precision=3, suppress_small=True)}")
+        r_body_to_depth = np.array(depth_position, dtype=float)
+        self.get_logger().info(f"r_body_to_depth:\n{np.array2string(r_body_to_depth, precision=3, suppress_small=True)}")
 
-        self.R_gps_frame_orientation = transform.Rotation.from_euler('xyz', gps_frame_orientation).as_matrix()
-        self.get_logger().info(f"R_gps_frame_orientation:\n{np.array2string(self.R_gps_frame_orientation, precision=3, suppress_small=True)}")
-        self.r_body_to_gps = np.array(gps_position, dtype=float)
-        self.get_logger().info(f"gps_position:\n{np.array2string(self.r_body_to_gps, precision=3, suppress_small=True)}")
+        R_body_to_dvl = transform.Rotation.from_euler('xyz', dvl_orientation).as_matrix()
+        self.get_logger().info(f"R_body_to_dvl:\n{np.array2string(R_body_to_dvl, precision=3, suppress_small=True)}")
+        r_body_to_dvl = np.array(dvl_position, dtype=float)
+        self.get_logger().info(f"r_body_to_dvl:\n{np.array2string(r_body_to_dvl, precision=3, suppress_small=True)}")
+
+        R_gps_fix_orientation = transform.Rotation.from_euler('xyz', gps_frame_orientation).as_matrix()
+        self.get_logger().info(f"R_gps_fix_orientation:\n{np.array2string(R_gps_fix_orientation, precision=3, suppress_small=True)}")
+        r_body_to_gps = np.array(gps_position, dtype=float)
+        self.get_logger().info(f"r_body_to_gps:\n{np.array2string(r_body_to_gps, precision=3, suppress_small=True)}")
 
         # UKF model
         self.model = MODEL(T=1, imu_freq=imu_freq)  # T dummy (not used online)
@@ -192,15 +136,35 @@ class StateEstimatorNode(Node):
             imu_acc_std**2 , imu_acc_std**2 , imu_acc_std**2
         ])
 
-        # Initialize aiding measurement noise
-        self.R_ahrs  = imu_ahrs_std**2 * np.eye(3)
-        self.R_depth =    depth_std**2 * np.eye(1)
-        self.R_dvl   =      dvl_std**2 * np.eye(3)
+        # Initialize aiding measurement models
+        sensor_params = SensorParams(
+            imu=ImuParams(
+                ahrs_std=imu_ahrs_std,
+                orientation=R_body_to_imu
+            ),
+            depth=DepthParams(
+                std=depth_std,
+                position=r_body_to_depth
+            ),
+            dvl=DvlParams(
+                std=dvl_std,
+                orientation=R_body_to_dvl,
+                position=r_body_to_dvl
+            ),
+            gps=GpsParams(
+                orientation_fix=R_gps_fix_orientation,
+                position=r_body_to_gps
+            )
+        )
+
+        self.measurement_models = MeasurementModels(
+            params=sensor_params
+        )
         
         # Initialize filter
         self.ukf = JUKF(
             f=self.model.f,
-            h=self.h_ahrs,  # default measurement model (can be changed before each update)
+            h=self.measurement_models.h_ahrs,  # default measurement model (can be changed before each update)
             phi=self.model.phi,
             Q=Q,
             alpha=alpha,
@@ -266,9 +230,6 @@ class StateEstimatorNode(Node):
             msg.linear_acceleration.z
         ])
 
-        gyro = self.R_imu_to_ned @ gyro
-        acc  = self.R_imu_to_ned @ acc
-
         # Set up the input data structure that will propagate IMU data through the filter
         self.omega = self.model.INPUT(gyro=gyro, acc=acc)
 
@@ -284,12 +245,12 @@ class StateEstimatorNode(Node):
             msg.orientation.w
         ]).as_matrix()
 
-        #!!! R_meas = self.R_imu_to_ned @ R_meas @ self.R_imu_to_ned.T
-
         # AHRS update (orientation)
         y = transform.Rotation.from_matrix(R_meas).as_rotvec()
-        self.ukf.h = self.h_ahrs
-        self.ukf.update(y, self.R_ahrs)
+        h = self.measurement_models.h_ahrs
+        R = self.measurement_models.R_ahrs
+        self.ukf.h = h
+        self.ukf.update(y, R)
 
         # Publish state estimate
         self.publish_state_estimate(msg.header)
@@ -326,8 +287,10 @@ class StateEstimatorNode(Node):
 
         # Depth update
         y = depth_meas
-        self.ukf.h = self.h_depth
-        self.ukf.update(y, self.R_depth)
+        h = self.measurement_models.h_depth
+        R = self.measurement_models.R_depth
+        self.ukf.h = h
+        self.ukf.update(y, R)
 
         # Publish state estimate
         self.publish_state_estimate(msg.header)
@@ -375,15 +338,11 @@ class StateEstimatorNode(Node):
         ])
 
         # DVL update
-        # ! y = vel_meas
-
-        # ! Try experimental DVL method
-        vel_enu = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z])
-        vel_ned = self.R_body_to_dvl @ vel_enu
-        y = vel_ned
-
-        self.ukf.h = self.h_dvl
-        self.ukf.update(y, self.R_dvl)
+        y = vel_meas
+        h = self.measurement_models.h_dvl
+        R = self.measurement_models.R_dvl
+        self.ukf.h = h
+        self.ukf.update(y, R)
 
         # Publish estimate
         self.publish_state_estimate(msg.header)
@@ -420,7 +379,7 @@ class StateEstimatorNode(Node):
         self.ukf.propagation(self.omega, dt)
 
         # Extract measured position
-        # Convert from WGS84 -> ECF -> ENU -> NED format
+        # Convert from WGS84 -> ECF -> ENU format
         lat = msg.latitude
         lon = msg.longitude
         h   = msg.altitude
@@ -436,26 +395,20 @@ class StateEstimatorNode(Node):
         east  -= self.east0
         north -= self.north0
         up    -= self.up0
+        p_enu = np.array([north, east, up])
 
-        # ENU → NED
-        p_ned = np.array([north, east, -up])
-
-        # Covariance ENU → NED
+        # Covariance reshape
         cov = np.array(msg.position_covariance).reshape(3, 3)
-        T = self.R_gps_frame_orientation
-        R_gps = T @ cov @ T.T
 
         # GPS update
-        y = p_ned
-        self.ukf.h = self.h_gps
-        self.ukf.update(y, R_gps)
+        y = p_enu
+        h = self.measurement_models.h_gps
+        R = cov
+        self.ukf.h = h
+        self.ukf.update(y, R)
 
         # Publish estimate
         self.publish_state_estimate(msg.header)
-
-        #! DEBUG
-        self.get_logger().info(f"[GPS] gps_pose:      {y}")
-        self.get_logger().info(f"[GPS] pose_estimate: {self.ukf.state.p}")
 
         # This only runs if "log" flag was activated during ROS launch
         if self.LOG:

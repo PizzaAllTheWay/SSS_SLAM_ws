@@ -1,5 +1,7 @@
 /**:
   ros__parameters:
     depth:
+      # Position (x, y, z): **0.658, 0.000, -0.059 [m]** (Navigation lever arm)
+      position: [0.658, 0.000, -0.059]
       std: 0.5
         
