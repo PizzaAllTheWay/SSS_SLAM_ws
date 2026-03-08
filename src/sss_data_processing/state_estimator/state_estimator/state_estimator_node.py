@@ -647,8 +647,6 @@ class StateEstimatorNode(Node):
             self.benchmark_logger.close()
     # Node Helpers (STOP) --------------------------------------------------
 
-    
-
 
 
 def main(args=None):

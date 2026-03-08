@@ -15,7 +15,7 @@ class StateEstimateLogger:
 
     def __init__(self):
         ws_root = os.getcwd()
-        log_dir = os.path.join(ws_root, "src/state_estimator/logs/data")
+        log_dir = os.path.join(ws_root, "src/sss_data_processing/state_estimator/logs/data")
         os.makedirs(log_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -40,7 +40,7 @@ class NISLogger:
 
     def __init__(self, datafile_name):
         ws_root = os.getcwd()
-        log_dir = os.path.join(ws_root, "src/state_estimator/logs/data")
+        log_dir = os.path.join(ws_root, "src/sss_data_processing/state_estimator/logs/data")
         os.makedirs(log_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -70,7 +70,7 @@ class BenchmarkLogger:
 
     def __init__(self):
         ws_root = os.getcwd()
-        log_dir = os.path.join(ws_root, "src/state_estimator/logs/data")
+        log_dir = os.path.join(ws_root, "src/sss_data_processing/state_estimator/logs/data")
         os.makedirs(log_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

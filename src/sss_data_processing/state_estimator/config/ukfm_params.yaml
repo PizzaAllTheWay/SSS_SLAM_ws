@@ -1,0 +1,39 @@
+/**:
+  ros__parameters:
+    ukfm:
+      # Initial state covariance diagonal (P_0)
+      # State vector dimension = 9
+      # State order:
+      #   [0:3]  Orientation error (SO(3) tangent ≈ roll, pitch, yaw) [rad]
+      #   [3:6]  Linear velocity in body frame [m/s]
+      #   [6:9]  Position in navigation frame (ENU) [m]
+      #
+      # These values represent the initial uncertainty assumed by the filter.
+      # Larger values allow the filter to adapt more quickly to measurements,
+      # while smaller values indicate higher confidence in the initial state.
+      #
+      # Here we assume:
+      #   ~0.1 rad initial attitude uncertainty
+      #   ~1 m/s velocity uncertainty
+      #   ~10 m position uncertainty
+      #
+      # Only the diagonal elements are specified here (P_0 is initialized as diag()).
+      P_0: [0.100, 0.100, 0.100,
+            1.000, 1.000, 1.000,
+            10.000, 10.000, 10.000]
+
+      # Sigma-point spread parameters (α) used by the JUKF implementation.
+      #
+      # JUKF internally builds several sigma-point sets for different stages:
+      #   1) Reduced-state propagation
+      #   2) Process noise propagation
+      #   3) Reduced-state update
+      #   4) State augmentation
+      #   5) Augmented noise
+      #
+      # Each value controls the spread of sigma points around the mean for the
+      # corresponding stage. Smaller values keep sigma points closer to the
+      # mean and are typically used for stable estimation in navigation filters.
+      #
+      # A common practical choice is ~1e-3 for all components.
+      alpha: [1e-3, 1e-3, 1e-3, 1e-3, 1e-3]

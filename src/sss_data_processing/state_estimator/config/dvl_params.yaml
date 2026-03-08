@@ -1,0 +1,17 @@
+/**:
+  ros__parameters:
+    dvl:
+      # Orientation from vehicle body frame → DVL frame [rad]
+      # Expressed as roll, pitch, yaw (XYZ Euler).
+      # In this configuration the DVL frame is aligned with the body frame,
+      # therefore the rotation is [0, 0, 0]. If the DVL is mounted with tilt
+      # or rotated relative to the vehicle axes, specify that rotation here.
+      orientation: [0.0, 0.0, 0.0]
+
+      # Lever arm from vehicle body frame → DVL sensor head [m]
+      # (x forward, y starboard/right, z down in vehicle config)
+      position: [0.50, 0.0, 0.20]
+
+      # Bottom-track velocity measurement noise standard deviation [m/s]
+      # Nortek DVL typical bottom velocity precision ≈ 0.002 m/s
+      std: 0.002

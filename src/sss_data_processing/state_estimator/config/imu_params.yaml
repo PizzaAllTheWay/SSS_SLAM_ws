@@ -1,0 +1,34 @@
+/**:
+  ros__parameters:
+    imu:
+      # Orientation from vehicle body frame → IMU frame [rad]
+      # Expressed as roll, pitch, yaw (XYZ Euler). The IMU on this vehicle is
+      # mounted aligned with the body frame, therefore the rotation is [0,0,0].
+      # If the IMU is mounted with any tilt or rotation relative to the vehicle
+      # axes, specify that transform here.
+      orientation: [0.0, 0.0, 0.0]
+
+      # IMU sampling frequency [Hz]
+      freq: 50
+
+      acc:
+        # Accelerometer measurement noise standard deviation [m/s²]
+        # A realistic GX4 accelerometer noise would typically be ~0.1–0.2 m/s².
+        # However, the process model used in this estimator does not capture all
+        # real underwater vehicle dynamics (hydrodynamic forces, currents, control
+        # effects, etc.). To account for these unmodelled dynamics and prevent the
+        # filter from becoming overconfident in pure inertial propagation, this
+        # value is intentionally inflated during tuning.
+        std: 2.00
+
+      gyro:
+        # Gyroscope measurement noise standard deviation [rad/s]
+        # Based on typical Microstrain GX4 performance and tuned for stable
+        # attitude propagation.
+        std: 0.05
+
+      ahrs:
+        # Orientation measurement noise from the internal AHRS solution [rad]
+        # Represents the expected uncertainty of the roll/pitch/yaw estimate
+        # provided by the IMU’s onboard filter.
+        std: 0.01

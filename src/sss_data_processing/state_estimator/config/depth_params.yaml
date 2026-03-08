@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    depth:
+      # Lever arm from vehicle body frame → depth sensor [m]
+      # Frame convention: ENU navigation frame, body frame aligned with vehicle axes
+      # (x forward, y starboard/right, z down in vehicle config)
+      # If the sensor is mounted differently, adjust position and orientation
+      # to represent the transform from body → sensor frame.
+      position: [0.658, 0.000, -0.059]
+
+      # Measurement noise standard deviation [m]
+      # Keller-33x depth sensor typical noise ≈ 0.05 m
+      std: 0.05

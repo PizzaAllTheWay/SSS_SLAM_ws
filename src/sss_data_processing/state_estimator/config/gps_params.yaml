@@ -1,0 +1,12 @@
+/**:
+  ros__parameters:
+    gps:
+      # Orientation from GPS measurement frame → local navigation frame (ENU)
+      # Expressed as roll, pitch, yaw (XYZ Euler). This is used to align the
+      # raw GPS position covariance with the estimator navigation frame.
+      # If the GPS frame already matches the navigation frame, keep [0,0,0].
+      frame_orientation: [0.0, 0.0, 0.0]
+
+      # Lever arm from vehicle body frame → GPS antenna [m]
+      # Position expressed in body coordinates (x forward, y starboard/right, z down)
+      position: [-0.283, 0.000, -0.287]

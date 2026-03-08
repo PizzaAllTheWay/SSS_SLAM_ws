@@ -1,5 +1,4 @@
 # Side Scan Sonar SLAM
-
 ## Overview
 This repository contains a full ROS 2 pipeline for Graph-Based feature SLAM using Side Scan Sonar (SSS).
 It supports both **offline processing (recorded data)** and **online deployment on real vehicles**.
@@ -14,9 +13,8 @@ The pipeline works with:
 
 All data must be published using standard ROS 2 message formats.
 
----
+**Requirements**
 
-# Requirements
 * Ubuntu 24.04 LTS
 * ROS 2 Jazzy
 
@@ -26,11 +24,34 @@ Rest of the dependencies that are specific to the code pipeline can be installed
 ```
 Or manually by following individual `README.md` in each ROS package inside `src/<ros-pkg>/README.md`
 
----
 
-# Two Ways to Run SSS SLAM
 
-## 1) Offline (Recorded Data – Recommended)
+--------------------------------------------------
+
+<br>
+<br>
+<br>
+
+## Repository Structure
+* **data/** → Contains recorded mission datasets and vehicle configuration files. These logs typically originate from underwater vehicles such as LAUV platforms and include sensor recordings used for offline SLAM experiments and reproducible testing. The folder may also contain configuration files describing the vehicle setup used during data collection.
+
+* **libs/** → Holds external libraries and research dependencies used by the project. These are usually third-party frameworks required by parts of the SLAM pipeline (for example UKF-M). Keeping them inside the repository ensures reproducibility and avoids dependency version conflicts across systems.
+
+* **scripts/** → Utility scripts used to simplify common workflows such as building the workspace, starting the SLAM pipeline, recording datasets, or replaying sensor logs. These scripts automate multi-step ROS operations so the full system can be started or evaluated with a single command.
+
+* **src/** → Contains all ROS 2 packages that implement the actual system components. Each package represents an individual module of the pipeline (for example sensor replay, state estimation, or SLAM processing) and can be launched independently or as part of the full system.
+
+
+
+--------------------------------------------------
+
+<br>
+<br>
+<br>
+
+## Two Ways to Run SSS SLAM
+
+**1) Offline (Recorded Data – Recommended)**
 
 The pipeline is designed to run from ROS 2 bags. The normal workflow is to start the full SLAM system first and then play back recorded data into it. Run:
 
@@ -54,9 +75,9 @@ If you want to enable data logging and benchmarking while running the SLAM pipel
 ```bash
 ./scripts/start_sss_slam.sh --LOG=true
 ```
-This activates internal estimator logging (e.g. state estimate NIS, residuals, benchmark metrics) for post run analysis. If the flag is not provided, the system runs in normal mode without extra debug or benchmark logging.
+This activates internal logging for all relevant ROS2 nodes (e.g. state estimate NIS, residuals, benchmark metrics) for post run analysis. If the flag is not provided, the system runs in normal mode without extra debug or benchmark logging.
 
-## 2) Online (Real Vehicle)
+**2) Online (Real Vehicle)**
 
 The full pipeline runs directly on any vehicle with:
 
@@ -75,26 +96,29 @@ For NTNU's BlueROV, ROS 2 is already native on the platform, so the pipeline can
 
 [https://github.com/PizzaAllTheWay/bluerov2_data_collection_ws](https://github.com/PizzaAllTheWay/bluerov2_data_collection_ws)
 
----
 
-# Repository Structure
-* data/      → Recorded CSV logs + vehicle configuration
-* scripts/   → Build, record, playback and launch scripts
-* src/       → ROS 2 nodes
 
----
+--------------------------------------------------
 
-# ROS 2 Package Overview
+<br>
+<br>
+<br>
 
+## ROS 2 Package Overview
 All ROS 2 packages are located in `src/`. Each package contains its own README.md with detailed explanations of its internal logic, parameters, and topic interfaces. Below is only a short high-level summary of the current packages used in the pipeline.
 
-## sss_data
-
+### sss_data
 **Purpose:**
 
 Replays recorded LAUV CSV logs and publishes them as real ROS 2 hardware topics.
 
 This node preserves the original UNIX timestamps from the logs, publishes at realistic sensor rates, and performs no artificial filtering or modification of the data. Sonar data is replayed as raw intensity values. It enables deterministic mission replay, reproducible SLAM experiments, and generation of clean ROS 2 bags from non-ROS datasets. Detailed documentation is available in the `sss_data` package README.
+
+**Subscribes:**
+
+```
+N/A
+```
 
 **Publishes:**
 
@@ -107,3 +131,34 @@ This node preserves the original UNIX timestamps from the logs, publishes at rea
 
 /benchmark/state_estimate [nav_msgs/Odometry]
 ```
+
+### sss_data_processing/state_estimator
+**Purpose:**
+
+The `state_estimator` package provides the vehicle motion estimate used during the data processing stage of the pipeline, primarily for local map generation from Side Scan Sonar data. It performs inertial navigation using an **INS-based Unscented Kalman Filter on Manifolds (UKF-M)**, where IMU measurements propagate the vehicle state while additional sensors are used to bound drift and maintain consistency. The estimator outputs a continuous estimate of vehicle **orientation, velocity, and position**, which is required for motion compensation and for placing sonar observations correctly when constructing local maps. Detailed documentation is available in the `sss_data_processing/state_estimator` package README.
+
+**Subscribes:**
+
+```
+/hardware/imu        [sensor_msgs/Imu]
+/hardware/depth      [geometry_msgs/PointStamped]
+/hardware/dvl        [marine_acoustic_msgs/Dvl]
+/hardware/gps        [sensor_msgs/NavSatFix]
+```
+These sensors provide inertial propagation and aiding measurements used to bound drift and stabilize the navigation solution.
+
+If logging is enabled, the estimator also optionally subscribes to:
+```
+/benchmark/state_estimate   [nav_msgs/Odometry]
+```
+This topic is used only for **Analysis and Evaluation**, allowing the estimated trajectory to be compared against an external reference solution during post-processing.
+
+A more detailed explanation of how these measurements are used inside the estimator can be found in the `sss_data_processing/state_estimator` package README.
+
+**Publishes:**
+
+```
+/sss_slam/data_processing/state_estimate    [nav_msgs/Odometry]
+```
+
+This topic contains the estimated vehicle state, including **position, orientation, body-frame velocity, and associated covariance**. It is used by downstream components of the SLAM pipeline, such as the local map generation and feature extraction modules, which rely on an accurate vehicle trajectory to correctly place sonar observations in space.
