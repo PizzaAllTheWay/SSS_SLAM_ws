@@ -181,3 +181,22 @@ def add_sensor_dropouts(ax, t, threshold=10.0, color="gray", alpha=0.25, label="
             label_added = True
         else:
             ax.axvspan(t_start, t_end, color=color, alpha=alpha)
+
+# SLIDING MEAN ----------
+def add_sliding_mean(ax, x, y, window=100, color="black", linewidth=2.5, label="Sliding mean"):
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    smooth = pd.Series(y).rolling(
+        window=window,
+        center=True,
+        min_periods=window//2
+    ).mean()
+
+    ax.plot(
+        x,
+        smooth,
+        color=color,
+        linewidth=linewidth,
+        label=label
+    )

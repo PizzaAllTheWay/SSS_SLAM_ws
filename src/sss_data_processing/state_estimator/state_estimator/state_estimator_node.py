@@ -26,7 +26,8 @@ from state_estimator.measurement_models import (
 from state_estimator.utils import (
     BenchmarkLogger, 
     NISLogger, 
-    StateEstimateLogger
+    StateEstimateLogger,
+    PerformanceLogger,
 )
 
 
@@ -196,10 +197,16 @@ class StateEstimatorNode(Node):
 
             self.benchmark_logger = BenchmarkLogger()
             self.sub_benchmark = self.create_subscription(Odometry, '/benchmark/state_estimate', self.benchmark_callback, 1)
+
+            self.performance_logger = PerformanceLogger()
     # INITIALIZE (STOP) --------------------------------------------------
 
     # Topic Handlers (START) --------------------------------------------------
     def imu_callback(self, msg: Imu):
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            self.performance_logger.start()
+
         # Convert ROS time data structure to readable time in precise seconds
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
@@ -262,7 +269,13 @@ class StateEstimatorNode(Node):
             nis_ahrs = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_ahrs_log_data(t, nis_ahrs)
 
+            self.performance_logger.stop(t)
+
     def depth_callback(self, msg: PointStamped):
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            self.performance_logger.start()
+
         # Convert ROS time data structure to readable time in precise seconds
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
@@ -302,7 +315,13 @@ class StateEstimatorNode(Node):
             nis_depth = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_depth_log_data(t, nis_depth)
 
+            self.performance_logger.stop(t)
+
     def dvl_callback(self, msg: Dvl):
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            self.performance_logger.start()
+
         # Before anything we must ensure DVL data is correct and what we want as it sends out different data at different times
         # Only use bottom track velocity (ignore water track or invalid modes)
         # In addition ensure beams are valid
@@ -352,8 +371,14 @@ class StateEstimatorNode(Node):
             S = self.ukf.S
             nis_dvl = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_dvl_log_data(t, nis_dvl)
+
+            self.performance_logger.stop(t)
     
     def gps_callback(self, msg: NavSatFix):
+        # This only runs if "log" flag was activated during ROS launch
+        if self.LOG:
+            self.performance_logger.start()
+
         # Double check that the message is valid
         if msg.status.status < 0:
             return
@@ -417,6 +442,8 @@ class StateEstimatorNode(Node):
             S = self.ukf.S
             nis_gps = float(innovation.T @ np.linalg.solve(S, innovation))
             self.nis_gps_log_data(t, nis_gps)
+
+            self.performance_logger.stop(t)
 
     # This callback will only work in if the "log" flag is set
     def benchmark_callback(self, msg: Odometry):

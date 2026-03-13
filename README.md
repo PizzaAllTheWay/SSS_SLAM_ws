@@ -39,7 +39,7 @@ Or manually by following individual `README.md` in each ROS package inside `src/
 
 * **scripts/** → Utility scripts used to simplify common workflows such as building the workspace, starting the SLAM pipeline, recording datasets, or replaying sensor logs. These scripts automate multi-step ROS operations so the full system can be started or evaluated with a single command.
 
-* **src/** → Contains all ROS 2 packages that implement the actual system components. Each package represents an individual module of the pipeline (for example sensor replay, state estimation, or SLAM processing) and can be launched independently or as part of the full system.
+* **src/** → Contains all ROS 2 packages that implement the actual system components. Each package represents an individual module of the pipeline (for example sensor replay, state estimation, or SLAM processing) and can be launched independently or as part of the full system. Each package also includes its own documentation and analysis tools for evaluating the performance and behavior of that specific component in isolation.
 
 
 
@@ -75,7 +75,7 @@ If you want to enable data logging and benchmarking while running the SLAM pipel
 ```bash
 ./scripts/start_sss_slam.sh --LOG=true
 ```
-This activates internal logging for all relevant ROS2 nodes (e.g. state estimate NIS, residuals, benchmark metrics) for post run analysis. If the flag is not provided, the system runs in normal mode without extra debug or benchmark logging.
+This activates internal logging for all relevant ROS2 nodes (e.g. state estimate NIS, residuals, benchmark metrics, runtime performance, RAM usage, ect...) for post run analysis. If the flag is not provided, the system runs in normal mode without extra debug or benchmark logging.
 
 **2) Online (Real Vehicle)**
 
