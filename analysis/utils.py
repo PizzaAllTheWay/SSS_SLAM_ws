@@ -44,7 +44,25 @@ def load_all_perf(datasets, window):
 
     return data
 
-def plot_metric(data, key, ylabel, title, total_color="black"):
+def add_sliding_mean(ax, x, y, window=100, color="black", linewidth=2.5):
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    smooth = pd.Series(y).rolling(
+        window=window,
+        center=True,
+        min_periods=window//2
+    ).mean()
+
+    ax.plot(
+        x,
+        smooth,
+        color=color,
+        linewidth=linewidth
+    )
+
+
+def plot_metric(data, key, ylabel, title, total_color="black", window=100):
 
     fig, axes = plt.subplots(2, 1, sharex=True)
     fig.suptitle(title)
@@ -62,24 +80,45 @@ def plot_metric(data, key, ylabel, title, total_color="black"):
         else:
             total += d[key]
 
+        # raw signal (transparent)
         axes[1].plot(
             d["t"],
             d[key],
-            label=name,
-            color=colors[i]
+            color=colors[i],
+            alpha=0.25,
+            label=name
         )
 
+        # sliding mean (strong)
+        add_sliding_mean(
+            axes[1],
+            d["t"],
+            d[key],
+            window=window,
+            color=colors[i],
+            linewidth=2
+        )
+
+    # total raw
     axes[0].plot(
         t,
         total,
-        linewidth=3,
         color=total_color,
-        label="Total"
+        alpha=1.0
+    )
+
+    # total mean
+    add_sliding_mean(
+        axes[0],
+        t,
+        total,
+        window=window,
+        color="black",
+        linewidth=3
     )
 
     axes[0].set_ylabel(ylabel)
     axes[0].set_title("Total")
-    axes[0].legend()
     axes[0].grid(True)
 
     axes[1].set_ylabel(ylabel)
