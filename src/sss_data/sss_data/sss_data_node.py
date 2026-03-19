@@ -303,18 +303,15 @@ class SSSDataNode(Node):
         msg.header.frame_id = "sonar_link"
 
         msg.ping_info.frequency = data["frequency"]
-        msg.ping_info.sound_speed = 1500.0
 
-        msg.sample0 = 0
         msg.samples_per_beam = data["samples_per_beam"]
 
-        range_res = data["max_range"] / data["samples_per_beam"]
-        msg.sample_rate = msg.ping_info.sound_speed / (2.0 * range_res)
+        msg.sample0 = 0
 
         msg.image = SonarImageData()
         msg.image.is_bigendian = False
         msg.image.dtype = SonarImageData.DTYPE_UINT8
-        msg.image.beam_count = 1
+        msg.image.beam_count = data["beam_count"]
         msg.image.data = data["data"]
 
         self.sonar_pub.publish(msg)

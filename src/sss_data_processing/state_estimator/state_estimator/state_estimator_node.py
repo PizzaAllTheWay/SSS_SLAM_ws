@@ -45,7 +45,7 @@ class StateEstimatorNode(Node):
         self.sub_gps   = self.create_subscription(NavSatFix   , '/hardware/gps'  , self.gps_callback  , 1)
 
         # Initialize ROS publishers
-        self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/state_estimate',10)
+        self.pub_odom = self.create_publisher(Odometry,'/sss_slam/data_processing/estimate/state',10)
 
         # Initialize and get ROS parameters
         self.declare_parameter("log", False)

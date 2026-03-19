@@ -38,7 +38,7 @@ This topic is used only for **Analysis and Evaluation**, allowing the estimated 
 **Published Topics**
 
 ```
-/sss_slam/data_processing/state_estimate    [nav_msgs/Odometry]
+/sss_slam/data_processing/estimate/state    [nav_msgs/Odometry]
 ```
 This topic contains the estimated vehicle state including
 - position

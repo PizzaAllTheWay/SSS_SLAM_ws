@@ -1,17 +1,16 @@
 <package format="3">
-  <name>state_estimator</name>
+  <name>local_map_generator</name>
   <version>1.0.0</version>
-  <description>State Estimator for the Side Scan Sonar SLAM pipeline</description>
+  <description>Local Map Generator for the Side Scan Sonar SLAM pipeline</description>
   <maintainer email="karate.martynas1@gmail.com">Martynas</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>rclpy</depend>
-  <depend>sensor_msgs</depend>
-  <depend>geometry_msgs</depend>
+  <depend>rcl</depend>
   <depend>marine_acoustic_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

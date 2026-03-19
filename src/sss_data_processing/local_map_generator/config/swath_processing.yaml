@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    swath_processing:
+      # Maximum sonar slant range [m]
+      # Used to compute slant resolution (range / bins) and sample_rate
+      # Must match the actual sonar configuration
+      max_range: 30.0

@@ -24,6 +24,7 @@ echo "[INFO] Building workspace..."
 colcon build \
   --packages-select \
   state_estimator \
+  local_map_generator \
   --cmake-args -DCMAKE_CXX_FLAGS="-w" -DCMAKE_C_FLAGS="-w"
 
 # Source workspace if build succeeded

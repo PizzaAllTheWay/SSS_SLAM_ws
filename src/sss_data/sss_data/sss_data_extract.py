@@ -364,9 +364,10 @@ class SSSDataExtract:
             hex_string = row[10].strip()           # raw hex intensity string
             raw_bytes  = bytes.fromhex(hex_string) # convert hex → uint8 bytes
 
-            samples_per_beam = len(raw_bytes) # number of intensity samples
+            beam_count = 2
+            samples_per_beam = len(raw_bytes) // beam_count # number of intensity samples per beam
 
-            # Return clean structured packet -----
+            # Return clean structured packet -----      
             return {
                 "t": rel_time,
                 "timestamp": timestamp,
@@ -376,6 +377,7 @@ class SSSDataExtract:
                 "bits": bits,
                 "scale": scale,
                 "samples_per_beam": samples_per_beam,
+                "beam_count": beam_count,
                 "data": raw_bytes,
             }
         
