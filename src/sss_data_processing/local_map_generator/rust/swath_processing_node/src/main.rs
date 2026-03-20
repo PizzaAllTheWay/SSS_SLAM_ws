@@ -30,6 +30,12 @@ use swath_processing_node::swath_processing_lib::types::{
 use swath_processing_node::swath_processing_lib::processor::{
     process_swath,
 };
+use swath_processing_node::swath_processing_lib::utils::{
+    LoggerPose,
+    LoggerAltitude,
+    LoggerSwathRaw,
+    LoggerSwathProcessed,
+};
 
 
 
@@ -77,6 +83,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pub_pose = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/swath/pose", QosProfile::default())?;
     let pub_altitude = node.create_publisher::<PointStamped>("/sss_slam/data_processing/swath/altitude", QosProfile::default())?;
     let pub_swath = node.create_publisher::<RawSonarImage>("/sss_slam/data_processing/swath/processed", QosProfile::default())?;
+    
+    // Loggers ----------
+    // If logging is enabled, these logger instances are created and used for data logging
+    let logger_pose = if LOG { Some(LoggerPose::new()) } else { None };
+    let logger_altitude = if LOG { Some(LoggerAltitude::new()) } else { None };
+    let logger_swath_raw = if LOG { Some(LoggerSwathRaw::new()) } else { None };
+    let logger_swath_processed = if LOG { Some(LoggerSwathProcessed::new()) } else { None };
     // Initialize ROS2 (STOP) --------------------------------------------------
 
     // ROS2 Handlers (START) --------------------------------------------------
@@ -107,18 +120,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pose.orientation.pitch = pitch;
             pose.orientation.yaw = yaw;
 
-            // ! Debugging
-            // r2r::log_info!(
-            //     "swath_processing_node",
-            //     "XYZ [{:.2}, {:.2}, {:.2}] | RPY [{:.2}, {:.2}, {:.2}]",
-            //     pose.position.x,
-            //     pose.position.y,
-            //     pose.position.z,
-            //     pose.orientation.roll,
-            //     pose.orientation.pitch,
-            //     pose.orientation.yaw
-            // );
-
             return future::ready(());
         }
     });
@@ -148,14 +149,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if msg.beam_ranges_valid && msg.num_good_beams > 0 {
                 let mut altitude = altitude_clone.write().unwrap();
                 altitude.value = msg.altitude;
-
-                // ! Debugging
-                // r2r::log_info!(
-                //     "swath_processing_node",
-                //     "ALTITUDE {:.2} m (beams: {})",
-                //     altitude.value,
-                //     msg.num_good_beams
-                // );
             }
 
             // CASE 2: Sound speed (environmental parameter)
@@ -165,13 +158,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if msg.sound_speed > 0.0 {
                 let mut sound_speed = sound_speed_clone.write().unwrap();
                 sound_speed.value = msg.sound_speed;
-
-                // ! Debugging
-                // r2r::log_info!(
-                //     "swath_processing_node",
-                //     "SOUND SPEED {:.2} m/s",
-                //     sound_speed.value
-                // );
             }
 
             return future::ready(());
@@ -185,9 +171,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pub_swath = pub_swath.clone();
 
+    // If logging is enabled, these logger instances are copied and transferred ownership to be used for data logging
+    // Move loggers into the async closure (ownership transfer) so they can be mutably used inside "move" context
+    let mut logger_pose = logger_pose;
+    let mut logger_altitude = logger_altitude;
+    let mut logger_swath_raw = logger_swath_raw;
+    let mut logger_swath_processed = logger_swath_processed;
+
     let sonar_task = sub_side_scan_sonar.for_each({
         move |msg: RawSonarImage| {
-            // Extract sonar data
+            let t = msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9;
+
+            // Extract sonar data -----
             // Fast path explanation:
             // - Vec::with_capacity(n) allocates memory but does NOT initialize it (len = 0)
             // - set_len(n) marks the buffer as fully sized WITHOUT writing zeros (avoids unnecessary work)
@@ -219,12 +214,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_range: max_range,
             };
 
-            // Acquire shared resources
+            // Acquire shared resources -----
             let pose = pose_clone.read().unwrap();
             let altitude = altitude_clone.read().unwrap();
             let sound_speed = sound_clone.read().unwrap();
 
-            // Process Data
+            // Process Data -----
             let swath_processed = process_swath(&swath_raw, &pose, &altitude, &sound_speed);
 
             // Publish Data -----
@@ -280,16 +275,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _ = pub_swath.publish(&swath_processed_msg);
 
+            // Log Data -----
+            // If logging is enabled, log the following data
+            if let Some(l) = &mut logger_swath_raw {
+                l.log(t, &swath_raw.port, &swath_raw.starboard);
+            }
+            if let Some(l) = &mut logger_pose {
+                l.log(t, &swath_processed.pose);
+            }
+            if let Some(l) = &mut logger_altitude {
+                l.log(t, swath_processed.altitude.value);
+            }
+            if let Some(l) = &mut logger_swath_processed {
+                l.log(t, &swath_processed.port, &swath_processed.starboard);
+            }
+
             // ! Debugging
-            r2r::log_info!(
-                "swath_processing_node",
-                "SONAR | n={} | alt={:.2}m | c={:.1}m/s | rate={:.1}Hz | freq={:.0}Hz",
-                msg.samples_per_beam,
-                swath_processed.altitude.value,
-                sound_speed.value,
-                swath_processed.sample_rate,
-                msg.ping_info.frequency
-            );
+            r2r::log_info!("swath_processing_node", "Swath Processed at timestamp: {:.4}", t);
 
             return future::ready(());
         }
