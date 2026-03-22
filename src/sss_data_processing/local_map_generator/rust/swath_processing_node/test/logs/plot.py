@@ -14,7 +14,7 @@ if __name__ == "__main__":
     END_SAMPLE = 4500
 
     raw_df = load_csv(
-        get_newest_file(DATA_DIR, "swath_raw"),
+        os.path.join(os.path.dirname(__file__), "../data/swath_raw.csv"),
         start_sample=START_SAMPLE,
         end_sample=END_SAMPLE,
     )

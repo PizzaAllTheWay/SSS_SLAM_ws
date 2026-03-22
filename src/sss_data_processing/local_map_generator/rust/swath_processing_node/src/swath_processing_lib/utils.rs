@@ -3,6 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use serde::Serialize;
+use std::time::Instant;
+use sysinfo::{System, get_current_pid};
 
 use super::types::*;
 
@@ -15,7 +17,7 @@ pub struct Logger {
 
 impl Logger {
     pub fn new(name: &str, header: &[&str]) -> Self {
-        let dir = "src/sss_data_processing/local_map_generator/logs/data";
+        let dir = "src/sss_data_processing/local_map_generator/logs/data/swath";
         create_dir_all(dir).unwrap();
 
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -30,6 +32,56 @@ impl Logger {
 
     pub fn log<T: Serialize>(&mut self, row: T) {
         self.writer.serialize(row).unwrap();
+    }
+}
+
+// ---------- PERFORMANCE ----------
+pub struct LoggerPerformance {
+    logger: Logger,
+    system: System,
+    pid: sysinfo::Pid,
+    t0: Option<Instant>,
+}
+
+impl LoggerPerformance {
+    pub fn new() -> Self {
+        let mut system = System::new_all();
+        system.refresh_all();
+        let pid = get_current_pid().unwrap();
+
+        Self {
+            logger: Logger::new(
+                "performance",
+                &["t", "runtime_s", "cpu_percent", "ram_mb"],
+            ),
+            system,
+            pid,
+            t0: None,
+        }
+    }
+
+    pub fn start(&mut self) {
+        self.t0 = Some(Instant::now());
+    }
+
+    pub fn stop(&mut self, t: f64) {
+        let Some(t0) = self.t0.take() else {
+            return;
+        };
+
+        let runtime_s = t0.elapsed().as_secs_f64();
+
+        self.system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[self.pid]), true);
+
+        let mut cpu_percent = 0.0;
+        let mut ram_mb = 0.0;
+
+        if let Some(proc_) = self.system.process(self.pid) {
+            cpu_percent = proc_.cpu_usage() as f64;
+            ram_mb = proc_.memory() as f64 / (1024.0 * 1024.0);
+        }
+
+        self.logger.log((t, runtime_s, cpu_percent, ram_mb));
     }
 }
 

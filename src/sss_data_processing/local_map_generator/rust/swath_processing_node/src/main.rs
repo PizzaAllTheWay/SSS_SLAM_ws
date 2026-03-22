@@ -24,13 +24,15 @@ use swath_processing_node::swath_processing_lib::types::{
     Orientation,
     Pose3D,
     AltitudeMeasurement,
-    SoundSpeed,
     SwathRaw,
+    TransducerParams,
+    SonarParams,
 };
 use swath_processing_node::swath_processing_lib::processor::{
     process_swath,
 };
 use swath_processing_node::swath_processing_lib::utils::{
+    LoggerPerformance,
     LoggerPose,
     LoggerAltitude,
     LoggerSwathRaw,
@@ -58,9 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let altitude_shared = Arc::new(RwLock::new(AltitudeMeasurement {
         value: 0.0,
     }));
-    let sound_speed_shared = Arc::new(RwLock::new(SoundSpeed {
-        value: 1500.0,
-    }));
 
     // Node ----------
     let ctx = r2r::Context::create()?;
@@ -68,11 +67,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parameters ----------
     #[allow(non_snake_case)]
-    let LOG: bool = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
-    let max_range: f32 = node.get_parameter::<f64>("swath_processing.max_range").ok().unwrap_or(0.0) as f32;
+    let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+    let max_range = node.get_parameter::<f64>("swath_processing.max_range").ok().unwrap_or(0.0) as f64;
+    let illumination_ema_period = node.get_parameter::<i64>("swath_processing.illumination_ema_period").ok().unwrap_or(0) as usize;
+    let transducer_port_pose_position_x = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_position_y = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.y").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_position_z = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.z").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_roll = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_pitch = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_yaw = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_port_beta = node.get_parameter::<f64>("swath_processing.transducers.port.beta").ok().unwrap_or(0.0) as f64;
+    let transducer_port_alpha = node.get_parameter::<f64>("swath_processing.transducers.port.alpha").ok().unwrap_or(0.0) as f64;
+    let transducer_port_is_reversed = node.get_parameter::<bool>("swath_processing.transducers.port.is_reversed").ok().unwrap_or(false) as bool;
+    let transducer_port_blind_zone_scale = node.get_parameter::<f64>("swath_processing.transducers.port.blind_zone_scale").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_x = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.x").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_y = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.y").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_z = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.z").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_roll = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_pitch = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_yaw = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_beta = node.get_parameter::<f64>("swath_processing.transducers.starboard.beta").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_alpha = node.get_parameter::<f64>("swath_processing.transducers.starboard.alpha").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_is_reversed = node.get_parameter::<bool>("swath_processing.transducers.starboard.is_reversed").ok().unwrap_or(false) as bool;
+    let transducer_starboard_blind_zone_scale = node.get_parameter::<f64>("swath_processing.transducers.starboard.blind_zone_scale").ok().unwrap_or(0.0) as f64;
 
     r2r::log_info!("swath_processing_node", "log: {}", LOG);
-    r2r::log_info!("swath_processing_node", "swath_processing.max_range: {:.2}", max_range);
+    r2r::log_info!("swath_processing_node", "swath_processing.max_range:               {:.2} [m]",               max_range);
+    r2r::log_info!("swath_processing_node", "swath_processing.illumination_ema_period: {}       ", illumination_ema_period);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.z:        {:.4} [m]  ",        transducer_port_pose_position_z);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.roll:  {:.2} [rad]",  transducer_port_pose_orientation_roll);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.pitch: {:.2} [rad]", transducer_port_pose_orientation_pitch);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.yaw:   {:.2} [rad]",   transducer_port_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.beta:                   {:.2} [deg]",                   transducer_port_beta);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.alpha:                  {:.6} [rad]",                  transducer_port_alpha);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.is_reversed:            {}         ",            transducer_port_is_reversed);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.blind_zone_scale:       {:.4}      ",       transducer_port_blind_zone_scale);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.x:        {:.4} [m]  ",        transducer_starboard_pose_position_x);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.y:        {:.4} [m]  ",        transducer_starboard_pose_position_y);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.z:        {:.4} [m]  ",        transducer_starboard_pose_position_z);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.roll:  {:.2} [rad]",  transducer_starboard_pose_orientation_roll);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.pitch: {:.2} [rad]", transducer_starboard_pose_orientation_pitch);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.yaw:   {:.2} [rad]",   transducer_starboard_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.beta:                   {:.2} [deg]",                   transducer_starboard_beta);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.alpha:                  {:.6} [rad]",                  transducer_starboard_alpha);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.is_reversed:            {}         ",            transducer_starboard_is_reversed);
+    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.blind_zone_scale:       {:.4}      ",       transducer_starboard_blind_zone_scale);
+
+    let sonar = SonarParams {
+        transducer_port: TransducerParams {
+            offset: Pose3D {
+                position: Position {
+                    x: transducer_port_pose_position_x,
+                    y: transducer_port_pose_position_y,
+                    z: transducer_port_pose_position_z,
+                },
+                orientation: Orientation {
+                    roll:  transducer_port_pose_orientation_roll,
+                    pitch: transducer_port_pose_orientation_pitch,
+                    yaw:   transducer_port_pose_orientation_yaw,
+                },
+            },
+            beta: transducer_port_beta.to_radians(),
+            alpha: transducer_port_alpha,
+            is_reversed: transducer_port_is_reversed,
+            blind_zone_scale: transducer_port_blind_zone_scale,
+        },
+        transducer_stb: TransducerParams {
+            offset: Pose3D {
+                position: Position {
+                    x: transducer_starboard_pose_position_x,
+                    y: transducer_starboard_pose_position_y,
+                    z: transducer_starboard_pose_position_z,
+                },
+                orientation: Orientation {
+                    roll:  transducer_starboard_pose_orientation_roll,
+                    pitch: transducer_starboard_pose_orientation_pitch,
+                    yaw:   transducer_starboard_pose_orientation_yaw,
+                },
+            },
+            beta: transducer_starboard_beta.to_radians(),
+            alpha: transducer_starboard_alpha,
+            is_reversed: transducer_starboard_is_reversed,
+            blind_zone_scale: transducer_starboard_blind_zone_scale,
+        },
+    };
 
     // Subscribers ----------
     let sub_state_estimate = node.subscribe::<Odometry>("/sss_slam/data_processing/estimate/state", QosProfile::default())?;
@@ -86,6 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Loggers ----------
     // If logging is enabled, these logger instances are created and used for data logging
+    let logger_performance = if LOG { Some(LoggerPerformance::new()) } else { None };
     let logger_pose = if LOG { Some(LoggerPose::new()) } else { None };
     let logger_altitude = if LOG { Some(LoggerAltitude::new()) } else { None };
     let logger_swath_raw = if LOG { Some(LoggerSwathRaw::new()) } else { None };
@@ -126,7 +207,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // DVL ----------
     let altitude_clone = altitude_shared.clone();
-    let sound_speed_clone = sound_speed_shared.clone();
 
     let dvl_task = sub_dvl.for_each({
         move |msg| {
@@ -142,22 +222,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return future::ready(());
             }
 
-            // CASE 1: Altitude (preferred measurement)
+            // Altitude
             // When beam ranges are valid and at least one beam is good, the DVL provides
             // a seabed-referenced altitude estimate. This is the primary quantity used
             // for swath processing (e.g. height above seabed for correct projection).
             if msg.beam_ranges_valid && msg.num_good_beams > 0 {
                 let mut altitude = altitude_clone.write().unwrap();
                 altitude.value = msg.altitude;
-            }
-
-            // CASE 2: Sound speed (environmental parameter)
-            // Some DVL packets contain only the speed of sound in water. This is not a
-            // geometric measurement, but is required for accurate sonar range conversion
-            // and acoustic propagation modeling.
-            if msg.sound_speed > 0.0 {
-                let mut sound_speed = sound_speed_clone.write().unwrap();
-                sound_speed.value = msg.sound_speed;
             }
 
             return future::ready(());
@@ -167,12 +238,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Side Scan Sonar ----------
     let pose_clone = pose_shared.clone();
     let altitude_clone = altitude_shared.clone();
-    let sound_clone = sound_speed_shared.clone();
 
     let pub_swath = pub_swath.clone();
 
     // If logging is enabled, these logger instances are copied and transferred ownership to be used for data logging
     // Move loggers into the async closure (ownership transfer) so they can be mutably used inside "move" context
+    let mut logger_performance = logger_performance;
     let mut logger_pose = logger_pose;
     let mut logger_altitude = logger_altitude;
     let mut logger_swath_raw = logger_swath_raw;
@@ -180,6 +251,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sonar_task = sub_side_scan_sonar.for_each({
         move |msg: RawSonarImage| {
+            // If logging is enabled, start logging performance
+            if let Some(l) = &mut logger_performance {
+                l.start(); 
+            }
+
             let t = msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9;
 
             // Extract sonar data -----
@@ -210,17 +286,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 timestamp: msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9,
                 port,
                 starboard,
-                samples_per_beam: msg.samples_per_beam,
+                samples_per_beam: msg.samples_per_beam as u64,
                 max_range: max_range,
             };
 
             // Acquire shared resources -----
             let pose = pose_clone.read().unwrap();
             let altitude = altitude_clone.read().unwrap();
-            let sound_speed = sound_clone.read().unwrap();
 
             // Process Data -----
-            let swath_processed = process_swath(&swath_raw, &pose, &altitude, &sound_speed);
+            let swath_processed = process_swath(
+                &swath_raw,
+                &pose,
+                &altitude,
+                &sonar,
+                illumination_ema_period,
+            );
 
             // Publish Data -----
             // Pose
@@ -259,7 +340,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             swath_processed_msg.header = msg.header.clone();
 
             swath_processed_msg.ping_info.frequency = msg.ping_info.frequency;
-            swath_processed_msg.ping_info.sound_speed = sound_speed.value;
 
             swath_processed_msg.samples_per_beam = msg.samples_per_beam;
             swath_processed_msg.sample0 = msg.sample0;
@@ -276,6 +356,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Log Data -----
             // If logging is enabled, log the following data
+            if let Some(l) = &mut logger_performance {
+                l.stop(t);
+            }
             if let Some(l) = &mut logger_swath_raw {
                 l.log(t, &swath_raw.port, &swath_raw.starboard);
             }

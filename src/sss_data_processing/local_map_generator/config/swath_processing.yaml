@@ -5,3 +5,84 @@
       # Used to compute slant resolution (range / bins) and sample_rate
       # Must match the actual sonar configuration
       max_range: 30.0
+
+      # Smoothing period used for estimating the illumination envelope during
+      # intensity normalization. This helps remove slow range-dependent brightness
+      # changes caused by sonar physics rather than actual seabed texture.
+      #
+      # Larger values -> smoother envelope, stronger normalization
+      # Smaller values -> more local detail preserved, but weaker / noisier normalization
+      #
+      # Start around 100-300 and tune experimentally for your sonar and dataset.
+      illumination_ema_period: 200
+
+      # Sonar transducer configuration for each channel.
+      # Each transducer block defines how that physical sonar head is mounted and how
+      # its measurements should be interpreted in the swath processing pipeline.
+      #
+      # Structure:
+      # - pose.position: transducer offset relative to the vehicle/body reference frame [m]
+      # - pose.orientation: transducer mounting rotation relative to body frame [rad]
+      # - beta: transducer tilt / grazing geometry angle used for first-bottom-return estimation [rad]
+      # - alpha: transducer beam opening angle [rad]
+      # - is_reversed: tells whether samples are stored far->near instead of near->far
+      # - blind_zone_scale: empirical correction factor for blind-zone removal
+      #
+      # Why this matters:
+      # The swath processing depends on where each transducer is mounted, which way it
+      # points, how wide the beam is, and how the samples are stored. Port and
+      # starboard often need separate configuration even when they are physically similar.
+      #
+      # Blind-zone scale:
+      # This is especially important. The theoretical first-bottom-return from pure
+      # geometry often does not match the real sonar image perfectly. In practice,
+      # the blind zone usually needs empirical tuning so water-column samples are
+      # removed correctly without cutting too much valid seabed data.
+      #
+      # Tuning guide:
+      # - increase blind_zone_scale -> larger removed blind zone
+      # - decrease blind_zone_scale -> smaller removed blind zone
+      # If the swath still shows water-column returns near nadir, increase it a bit.
+      # If valid seabed is being cut away too early, decrease it a bit.
+      transducers:
+        port:
+          pose:
+            position:
+              # Transducer offset in body frame [m]
+              x: -0.2532
+              y:  0.082
+              z:  0.033
+            orientation:
+              # Mounting rotation in body frame [rad]
+              roll:  0.0
+              pitch: 0.0
+              yaw:   0.0
+          # Transducer beam tilt / look angle [deg]
+          beta: 25.0
+          # Beam opening angle [rad]
+          alpha: 1.0471975511965976  # pi/3
+          # True when samples are stored in reverse order (far -> near)
+          is_reversed: true
+          # Empirical correction used when removing the blind zone
+          blind_zone_scale: 0.45
+
+        starboard:
+          pose:
+            position:
+              # Transducer offset in body frame [m]
+              x: -0.2532
+              y: -0.082
+              z:  0.033
+            orientation:
+              # Mounting rotation in body frame [rad]
+              roll:  0.0
+              pitch: 0.0
+              yaw:   0.0
+          # Transducer beam tilt / look angle [deg]
+          beta: 25.0
+          # Beam opening angle [rad]
+          alpha: 1.0471975511965976  # pi / 3
+          # False when samples are stored in normal order (near -> far)
+          is_reversed: false
+          # Empirical correction used when removing the blind zone
+          blind_zone_scale: 0.35

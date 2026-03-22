@@ -7,7 +7,7 @@ from utils import (
 
 
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data/swath")
 
 def main():
     raw = load_csv(get_newest_file(DATA_DIR, "swath_raw"))

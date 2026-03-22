@@ -29,7 +29,6 @@ pub struct Logger {
 impl Logger {
     pub fn new(name: &str, header: &[&str]) -> Self {
         let dir = "test/logs/data";
-        //let dir = "../../logs/data";
         create_dir_all(dir).unwrap();
 
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
