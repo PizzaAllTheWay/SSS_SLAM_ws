@@ -28,7 +28,8 @@ pub struct Logger {
 
 impl Logger {
     pub fn new(name: &str, header: &[&str]) -> Self {
-        let dir = "../../logs/data";
+        let dir = "test/logs/data";
+        //let dir = "../../logs/data";
         create_dir_all(dir).unwrap();
 
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -84,8 +85,8 @@ fn parse_vec_u8(s: &str) -> Vec<u8> {
 
 
 fn main() {
-    //let n = 10_000;
-    let n = 5_000;
+    let n = 10_000;
+    //let n = 5_000;
     //let n = 1_000;
 
     let pose_file = BufReader::new(File::open("test/data/pose.csv").unwrap());
@@ -97,8 +98,6 @@ fn main() {
     let mut swath_iter= swath_file.lines().skip(1);
 
     let mut logger = LoggerSwathProcessed::new();
-
-    let sound = SoundSpeed { value: 1500.0 };
 
     for _ in 0..n {
         let pose_line = pose_iter.next().unwrap().unwrap();
@@ -143,6 +142,7 @@ fn main() {
                 beta: 25.0_f64.to_radians(), // same for both sides
                 alpha: std::f64::consts::PI / 3.0,
                 is_reversed: true, // port is stored 1000 -> 0
+                blind_zone_scale: 0.45, // empirically tuned from test data
             },
             transducer_stb: TransducerParams {
                 offset: Pose3D {
@@ -160,13 +160,13 @@ fn main() {
                 beta: 25.0_f64.to_radians(), // same for both sides
                 alpha: std::f64::consts::PI / 3.0,
                 is_reversed: false, // starboard is stored 0 -> 1000
+                blind_zone_scale: 0.35, // empirically tuned from test data
             },
         };
 
         // empirically tuned from test data
-        let blind_zone_scale = 0.35;
-        let p_smoothing = 1.0;
-        let out = process_swath(&swath_raw, &pose, &altitude, &sound, &sonar, blind_zone_scale, p_smoothing);
+        let illumination_ema_period = 200;
+        let out = process_swath(&swath_raw, &pose, &altitude, &sonar, illumination_ema_period);
 
         logger.log(t, &out.port, &out.starboard);
     }

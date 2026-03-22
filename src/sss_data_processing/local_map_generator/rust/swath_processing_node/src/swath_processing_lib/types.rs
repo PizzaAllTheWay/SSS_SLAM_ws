@@ -29,12 +29,6 @@ pub struct AltitudeMeasurement {
     pub value: f64,
 }
 
-pub struct SoundSpeed {
-    // Speed of sound in water [m/s]
-    // Used for sonar propagation and range correction
-    pub value: f64,
-}
-
 #[derive(Clone)]
 pub struct SwathRaw {
     // Timestamp of ping transmission (important for sync)
@@ -73,6 +67,9 @@ pub struct TransducerParams {
 
     // Sample storage direction
     pub is_reversed: bool, // true if samples are stored far->near
+
+    // Blind zone compensation factor
+    pub blind_zone_scale: f64, // empirically tuned from test data
 }
 
 pub struct SonarParams {
