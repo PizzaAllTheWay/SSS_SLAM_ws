@@ -15,7 +15,7 @@ sysinfo = "0.38.4"
 
 
 
-# ! Debugging / Testing
+# Include Debugging/Testing/Profiling tools and test pipelines
 [[bin]]
 name = "test"
 path = "test/test.rs"

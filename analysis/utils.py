@@ -11,36 +11,103 @@ def resolve_dataset_paths(datasets):
         resolved[name] = os.path.abspath(os.path.join(ROOT, "..", rel_path))
     return resolved
 
-def load_perf(path):
+def load_perf(path, t_start, t_stop, t_delta=5.0):
     df = pd.read_csv(path)
+    df = df.copy().sort_values("t").reset_index(drop=True)
 
-    t0 = df["t"].iloc[0]
-    df["t_rel"] = df["t"] - t0
+    rows = []
+    last_t = t_start
 
+    for _, row in df.iterrows():
+        t = row["t"]
+
+        if t < t_start or t > t_stop:
+            continue
+
+        if t - last_t > t_delta:
+            rows.append({
+                "t": last_t,
+                "cpu_percent": 0.0,
+                "ram_mb": 0.0,
+                "runtime_s": 0.0,
+            })
+            rows.append({
+                "t": t,
+                "cpu_percent": 0.0,
+                "ram_mb": 0.0,
+                "runtime_s": 0.0,
+            })
+
+        rows.append({
+            "t": t,
+            "cpu_percent": row["cpu_percent"],
+            "ram_mb": row["ram_mb"],
+            "runtime_s": row["runtime_s"],
+        })
+
+        last_t = t
+
+    if len(rows) == 0:
+        rows = [{
+            "t": t_start,
+            "cpu_percent": 0.0,
+            "ram_mb": 0.0,
+            "runtime_s": 0.0,
+        }]
+
+    if t_stop - last_t > t_delta:
+        rows.append({
+            "t": last_t,
+            "cpu_percent": 0.0,
+            "ram_mb": 0.0,
+            "runtime_s": 0.0,
+        })
+        rows.append({
+            "t": t_stop,
+            "cpu_percent": 0.0,
+            "ram_mb": 0.0,
+            "runtime_s": 0.0,
+        })
+
+    df = pd.DataFrame(rows)
+    df["t_rel"] = df["t"] - t_start
     return df
 
-def resample_perf(df, window):
-    bins = np.arange(df["t_rel"].min(), df["t_rel"].max(), window)
+
+def resample_perf(df, window, t_start, t_stop):
+    t_rel_stop = t_stop - t_start
+    bins = np.arange(0.0, t_rel_stop + window, window)
 
     df = df.copy()
-    df["bin"] = np.digitize(df["t_rel"], bins)
+    df["bin"] = np.digitize(df["t_rel"], bins) - 1
+    df = df[(df["bin"] >= 0) & (df["bin"] < len(bins) - 1)]
 
     g = df.groupby("bin").mean(numeric_only=True)
 
+    cpu = np.zeros(len(bins) - 1)
+    ram = np.zeros(len(bins) - 1)
+    runtime = np.zeros(len(bins) - 1)
+
+    idx = g.index.to_numpy(dtype=int)
+    cpu[idx] = g["cpu_percent"].to_numpy()
+    ram[idx] = g["ram_mb"].to_numpy()
+    runtime[idx] = g["runtime_s"].to_numpy() * 1000.0
+
     return {
-        "t": bins[:len(g)],
-        "cpu": g["cpu_percent"].values,
-        "ram": g["ram_mb"].values,
-        "runtime": g["runtime_s"].values * 1000
+        "t": bins[:-1],
+        "cpu": cpu,
+        "ram": ram,
+        "runtime": runtime
     }
 
-def load_all_perf(datasets, window):
+
+def load_all_perf(datasets, window, t_start, t_stop, t_delta=5.0):
     data = {}
     paths = resolve_dataset_paths(datasets)
 
     for name, path in paths.items():
-        df = load_perf(path)
-        data[name] = resample_perf(df, window)
+        df = load_perf(path, t_start, t_stop, t_delta)
+        data[name] = resample_perf(df, window, t_start, t_stop)
 
     return data
 
@@ -60,7 +127,6 @@ def add_sliding_mean(ax, x, y, window=100, color="black", linewidth=2.5):
         color=color,
         linewidth=linewidth
     )
-
 
 def plot_metric(data, key, ylabel, title, total_color="black", window=100):
 

@@ -67,7 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parameters ----------
     #[allow(non_snake_case)]
-    let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+    // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+    let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
     let max_range = node.get_parameter::<f64>("swath_processing.max_range").ok().unwrap_or(0.0) as f64;
     let illumination_ema_period = node.get_parameter::<i64>("swath_processing.illumination_ema_period").ok().unwrap_or(0) as usize;
     let transducer_port_pose_position_x = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
@@ -371,9 +372,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(l) = &mut logger_swath_processed {
                 l.log(t, &swath_processed.port, &swath_processed.starboard);
             }
-
-            // ! Debugging
-            r2r::log_info!("swath_processing_node", "Swath Processed at timestamp: {:.4}", t);
 
             return future::ready(());
         }
