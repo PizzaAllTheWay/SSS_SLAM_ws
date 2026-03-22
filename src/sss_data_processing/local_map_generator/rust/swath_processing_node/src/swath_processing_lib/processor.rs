@@ -2,9 +2,9 @@ use nalgebra::{
     Rotation3,
     Vector3,
 };
-use interp::{
-    InterpMode,
-    interp,
+use savgol_rs::{
+    SavGolInput, 
+    savgol_filter
 };
 
 use super::types::*;
@@ -18,6 +18,7 @@ pub fn process_swath(
     sound_speed: &SoundSpeed,
     sonar: &SonarParams,
     blind_zone_scale: f64,
+    p_smoothing: f64,
 ) -> SwathProcessed {
     // Interpolate ----------
     let pose_interpolated = _interpolate_pose(pose);
@@ -38,18 +39,28 @@ pub fn process_swath(
         &geometric_correction_data,
     );
 
-    // Slant Range Correction ----------
-    let (port, starboard) = _slant_to_ground(
+    // Intensity Normalization ----------
+    let (port, starboard) = _intensity_normalization(
         &port,
         &starboard,
         swath_raw,
         sonar,
         blind_zone_scale,
+        p_smoothing,
         &geometric_correction_data,
     );
 
-    // Intensity Normalization ----------
-        // TODO: intensity_normalization()
+    // Slant Range Correction ----------
+    // let (port, starboard) = _slant_to_ground(
+    //     &port,
+    //     &starboard,
+    //     swath_raw,
+    //     sonar,
+    //     blind_zone_scale,
+    //     &geometric_correction_data,
+    // );
+
+    
 
     // Output ----------
     SwathProcessed {
@@ -246,12 +257,14 @@ fn _remove_blind_zone(
     // measured backscatter seen in the real sonar data. For now, a per-channel
     // scaling factor is applied as a practical correction.
     let bin_fbr_port = _range_to_bin(
-        geometric_correction_data.r_fbr_port * blind_zone_scale,
         swath,
+        geometric_correction_data.r_fbr_port,
+        blind_zone_scale,
     );
     let bin_fbr_stb = _range_to_bin(
-        geometric_correction_data.r_fbr_stb * blind_zone_scale,
-        swath
+        swath,
+        geometric_correction_data.r_fbr_stb,
+        blind_zone_scale,
     );
 
     // Work on local copies so the raw input swath remains unchanged.
@@ -272,6 +285,25 @@ fn _remove_blind_zone(
     );
 
     return (port, starboard);
+}
+
+/// Converts first-bottom-return slant range from meters into a sample/bin index.
+///
+/// The conversion uses the slant-range resolution of the swath:
+///     slant_resolution = max_range / samples_per_beam
+///
+/// The result is clamped so it always stays inside the valid array bounds.
+fn _range_to_bin(
+    swath: &SwathRaw,
+    r: f64,
+    scale: f64,
+) -> usize {
+    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
+    let r_scaled = r * scale;
+    let bin = (r_scaled/slant_resolution).floor();
+    let bin_fbr = bin.clamp(0.0, swath.samples_per_beam as f64) as usize;
+
+    return bin_fbr;
 }
 
 /// Masks the blind-zone portion of one channel in-place.
@@ -301,24 +333,188 @@ fn _mask_blind_zone(
         }
     }
 }
-
-/// Converts first-bottom-return slant range from meters into a sample/bin index.
-///
-/// The conversion uses the slant-range resolution of the swath:
-///     slant_resolution = max_range / samples_per_beam
-///
-/// The result is clamped so it always stays inside the valid array bounds.
-fn _range_to_bin(
-    r_fbr: f64,
-    swath: &SwathRaw,
-) -> usize {
-    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
-    let bin = (r_fbr/slant_resolution).floor();
-    let bin_fbr = bin.clamp(0.0, swath.samples_per_beam as f64) as usize;
-
-    return bin_fbr;
-}
 // Blind Zone Removal Functions (STOP) --------------------------------------------------
+
+
+
+// Intensity Normalization Functions (START) --------------------------------------------------
+fn _intensity_normalization(
+    port: &Vec<u8>,
+    starboard: &Vec<u8>,
+    swath: &SwathRaw,
+    sonar: &SonarParams,
+    blind_zone_scale: f64,
+    p_smoothing: f64,
+    geometric_correction_data: &GeometricCorrection,
+) -> (Vec<u8>, Vec<u8>) {
+    let port_est_illum_map = _estimate_illumination_map(
+        swath,
+        port,
+        sonar.transducer_port.is_reversed,
+        blind_zone_scale,
+        p_smoothing,
+        geometric_correction_data.r_fbr_port,
+    );
+    let starboard_est_illum_map = _estimate_illumination_map(
+        swath,
+        starboard,
+        sonar.transducer_stb.is_reversed,
+        blind_zone_scale,
+        p_smoothing,
+        geometric_correction_data.r_fbr_stb,
+    );
+
+    let port_est_ref_map = _estimate_reflectivity_map(
+        &port_est_illum_map,
+        swath,
+        port,
+        sonar.transducer_port.is_reversed,
+        blind_zone_scale,
+        geometric_correction_data.r_fbr_port,
+    );
+    let starboard_est_ref_map = _estimate_reflectivity_map(
+        &starboard_est_illum_map,
+        swath,
+        starboard,
+        sonar.transducer_stb.is_reversed,
+        blind_zone_scale,
+        geometric_correction_data.r_fbr_stb,
+    );
+
+    (port_est_ref_map, starboard_est_ref_map)
+}
+
+fn _estimate_illumination_map(
+    swath: &SwathRaw,
+    channel: &Vec<u8>,
+    is_reversed: bool,
+    blind_zone_scale: f64,
+    p_smoothing: f64,
+    r_fbr: f64,
+) -> Vec<f64> {
+    let n_bins = channel.len();
+
+    // Convert corrected first-bottom-return range to the blind-zone boundary bin.
+    // This gives the start of valid seabed samples in logical near->far order.
+    // ?We need the saclaing because of blablabla... write something here.....
+    let bin_fbr = _range_to_bin(
+        swath,
+        r_fbr,
+        blind_zone_scale,
+    );
+
+    // Extract only the valid channel region and read it in logical near->far order.
+    // Blind-zone bins are intentionally ignored and remain outside the spline fit.
+    // Extract only valid seabed samples and read them in logical near->far order.
+    // This valid intensity vector is I(i) from the thesis cost function.
+    #[allow(non_snake_case)]
+    let I: Vec<f64> = if is_reversed {
+        channel[..n_bins.saturating_sub(bin_fbr)]
+            .iter()
+            .rev()
+            .map(|&v| v as f64)
+            .collect()
+    } else {
+        channel[bin_fbr.min(n_bins)..]
+            .iter()
+            .map(|&v| v as f64)
+            .collect()
+    };
+
+    // ? Better return way???
+    if I.len() < 5 {
+        return I;
+    }
+
+    // ? Perhaps expaing what teh windws does woudl be nice
+    let mut window_length = 201;
+    if window_length % 2 == 0 {
+        window_length -= 1;
+    }
+
+    // ? Merhaps explaining what the filted does and what the inputs represent an dsuff
+    let input = SavGolInput {
+        data: &I,
+        window_length,
+        poly_order: 3,
+        derivative: 0,
+    };
+
+    // ? Better retutn way
+    match savgol_filter(&input) {
+        Ok(L_hat) => L_hat,
+        Err(_) => I,
+    }
+}
+
+
+fn _estimate_reflectivity_map(
+    est_illum_map: &Vec<f64>,
+    swath: &SwathRaw,
+    channel: &Vec<u8>,
+    is_reversed: bool,
+    blind_zone_scale: f64,
+    r_fbr: f64,
+) -> Vec<u8> {
+    let n_bins = channel.len();
+
+    let bin_fbr = _range_to_bin(
+        swath,
+        r_fbr,
+        blind_zone_scale,
+    );
+
+    let mut r_hat_full = vec![0u8; n_bins];
+
+    // Extract valid region in logical near->far order
+    let valid_indices: Vec<usize> = if is_reversed {
+        (0..n_bins.saturating_sub(bin_fbr)).rev().collect()
+    } else {
+        (bin_fbr.min(n_bins)..n_bins).collect()
+    };
+
+    if valid_indices.is_empty() || est_illum_map.is_empty() {
+        return r_hat_full;
+    }
+
+    // Use original valid channel span as output display span
+    let mut valid_min = u8::MAX;
+    let mut valid_max = u8::MIN;
+    for &idx in &valid_indices {
+        let v = channel[idx];
+        valid_min = valid_min.min(v);
+        valid_max = valid_max.max(v);
+    }
+
+    let out_min = valid_min as f64;
+    let out_max = valid_max as f64;
+
+    // Compute raw reflectivity values first
+    let mut r_hat_valid = Vec::<f64>::new();
+    for (i, &idx) in valid_indices.iter().enumerate().take(est_illum_map.len()) {
+        let l_hat = est_illum_map[i].max(1e-9);
+        let r_hat = (channel[idx] as f64) / l_hat;
+        r_hat_valid.push(r_hat);
+    }
+
+    if r_hat_valid.is_empty() {
+        return r_hat_full;
+    }
+
+    // Normalize reflectivity into original valid intensity span
+    let r_min = r_hat_valid.iter().cloned().fold(f64::INFINITY, f64::min);
+    let r_max = r_hat_valid.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let r_span = (r_max - r_min).max(1e-9);
+
+    for (i, &idx) in valid_indices.iter().enumerate().take(r_hat_valid.len()) {
+        let r_norm = (r_hat_valid[i] - r_min) / r_span;
+        let v_out = out_min + r_norm * (out_max - out_min);
+        r_hat_full[idx] = v_out.clamp(0.0, 255.0) as u8;
+    }
+
+    r_hat_full
+}
+// Intensity Normalization Functions (STOP) --------------------------------------------------
 
 
 
@@ -326,20 +522,29 @@ fn _range_to_bin(
 /// Converts both sonar channels from slant range to ground range.
 ///
 /// Why this is needed:
-/// After blind-zone removal, the remaining samples are still indexed by distance
-/// along the acoustic beam path, not by true horizontal distance on the seabed.
-/// This causes across-track geometric distortion in the swath. Slant-range
-/// correction removes that distortion by projecting each valid sample onto the
-/// seabed plane using the corrected transducer height estimated earlier.
+/// After blind-zone removal, the remaining samples still represent distance
+/// along the acoustic path of the sonar beam. That is useful for raw sensing,
+/// but not ideal for later mapping, since equal bin spacing in slant range does
+/// not correspond to equal horizontal spacing on the seabed.
+///
+/// This step projects each valid sample onto the seabed plane using the
+/// corrected transducer height estimated earlier. In practice, this reduces the
+/// across-track geometric distortion that appears when the swath is kept purely
+/// in beam coordinates.
 ///
 /// High-level algorithm:
-/// 1. For each channel separately, read valid samples in logical near->far order.
-/// 2. Convert each valid slant-range bin to horizontal ground range.
-/// 3. Store the result as irregular `(ground_range, intensity)` samples.
-/// 4. Interpolate those irregular samples onto a uniform ground-range grid.
-/// 5. Write the final result back in the original native storage order.
+/// 1. Process port and starboard independently.
+/// 2. Read each channel in logical near->far order.
+/// 3. Convert each valid slant-range sample to horizontal ground range.
+/// 4. Place the projected sample into its corresponding ground-range bin.
+/// 5. Write the result back in the channel's native storage order.
 ///
-/// Port and starboard are processed independently, but with the exact same logic.
+/// Note:
+/// This implementation currently uses a direct bin remap without interpolation.
+/// That means some ground bins may remain empty, but it keeps the method simple,
+/// fast, and close to the raw measured structure.
+/// Next phases of the sonar processing pipeline will do probabilistic interpolation
+/// to fill these gaps fast and accurately
 fn _slant_to_ground(
     port: &[u8],
     starboard: &[u8],
@@ -366,26 +571,28 @@ fn _slant_to_ground(
     return (port, starboard);
 }
 
-/// Stage 1:
-/// Collect valid projected samples from one channel.
+/// Projects one channel from slant-range bins into ground-range bins.
 ///
 /// Why this is needed:
-/// The original channel is sampled uniformly in slant-range space, but after
-/// projection onto the seabed the samples are no longer uniformly spaced.
-/// Therefore, this first stage does not try to build the final output row yet.
-/// Instead, it creates an intermediate sparse representation made of projected
-/// `(ground_bin, intensity)` samples.
+/// A sonar channel is sampled uniformly in slant range, but after projection to
+/// the seabed the corresponding horizontal ground positions are no longer the
+/// same as the original beam positions. This function remaps each valid sample
+/// to the ground-range bin where it physically belongs.
 ///
 /// Algorithm:
 /// 1. Walk through the channel in logical near->far order.
-/// 2. Ignore blind-zone samples that were already masked to zero.
-/// 3. Convert each bin index to physical slant range.
-/// 4. Project slant range to ground range using flat-seabed geometry.
-/// 5. Convert ground range to a target ground bin.
-/// 6. Store `(ground_bin, intensity)` for later accumulation.
+/// 2. Skip samples that were already masked out by blind-zone removal.
+/// 3. Convert the current bin index into physical slant range.
+/// 4. Project that slant range to horizontal ground range using flat-seabed geometry.
+/// 5. Convert the ground range back to a discrete output bin index.
+/// 6. Write the intensity into that projected output bin.
 ///
-/// Intensities are kept as `u8` here because they are still just sample values.
-/// No interpolation is done in this step.
+/// Notes:
+/// - The output keeps the same number of bins as the input.
+/// - The channel is written back in its native storage order.
+/// - No interpolation is done here; empty gaps are therefore expected.
+/// - If multiple projected samples land in the same output bin, the strongest
+///   intensity is kept.
 fn _collect_ground_samples(
     channel: &[u8],
     h_t_transducer: f64,
@@ -394,7 +601,7 @@ fn _collect_ground_samples(
     blind_zone_scale: f64,
 ) -> Vec<u8> {
     let n_bins: usize = channel.len();
-    let slant_resolution = swath.max_range / swath.samples_per_beam as f64;
+    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
 
     let mut ground_channel = vec![0u8; n_bins];
 
@@ -407,29 +614,42 @@ fn _collect_ground_samples(
 
         let intensity = channel[source_index];
 
-        // Blind-zone samples were already masked in the previous step,
-        // so only nonzero valid seabed samples are kept here.
+        // Samples already masked by the blind-zone step are invalid for seabed
+        // projection, so only nonzero returns are processed further.
         if intensity == 0 { continue; }
 
-        // Convert the current bin to physical slant range and project it onto
-        // the seabed plane. Invalid geometric cases are skipped. In practice,
-        // these should already mostly be excluded by blind-zone removal.
-        // ! let slant_range = slant_bin as f64 * slant_resolution;
+        // Convert the current discrete bin into physical slant range and project
+        // it onto the seabed plane. Samples that still fall below the corrected
+        // transducer height would produce invalid geometry and are skipped.
+        //
+        // NOTE:
+        // The blind-zone scale is also used here as an empirical correction.
+        // In practice, using the pure geometric slant bin directly tended to
+        // over-expand the nadir / blind-zone region. Applying the same tuning
+        // factor here gave a better match to the observed sonar image.
         let slant_range = slant_bin as f64 * slant_resolution/blind_zone_scale;
         if slant_range <= h_t_transducer { continue; }
 
         let ground_range = (slant_range * slant_range - h_t_transducer * h_t_transducer).sqrt();
 
-        // Convert projected ground range to the nearest target ground bin.
-        // Samples outside the channel bounds are ignored.
-        let mut ground_bin = (ground_range / slant_resolution).floor() as usize;
-        ground_bin = ((ground_bin as f64) * blind_zone_scale).floor() as usize;
+        // Convert projected ground range back to the nearest output ground bin.
+        // Any sample that lands outside the valid channel bounds is ignored.
+        //
+        // NOTE:
+        // The same empirical scale factor is applied here as well. This is not a
+        // purely geometric correction, but a practical tuning that currently
+        // gives the best visual and spatial agreement with the real data.
+        let ground_bin = _range_to_bin(
+            swath,
+            ground_range,
+            blind_zone_scale
+        );
         if ground_bin >= n_bins { continue; }
 
-        // keep strongest sample landing in this bin
+        // Convert the logical near->far ground bin back into the channel's native
+        // storage order before writing the projected intensity.
         let target_index = if is_reversed {
             n_bins - 1 - ground_bin
-            
         } else {
             ground_bin
         };
@@ -439,10 +659,4 @@ fn _collect_ground_samples(
 
     return ground_channel;
 }
-
-
-
-// !!! STEP 2 
-
-
 // Slant Range Correction Functions (STOP) --------------------------------------------------

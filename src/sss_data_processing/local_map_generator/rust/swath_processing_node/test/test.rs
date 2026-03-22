@@ -165,7 +165,8 @@ fn main() {
 
         // empirically tuned from test data
         let blind_zone_scale = 0.35;
-        let out = process_swath(&swath_raw, &pose, &altitude, &sound, &sonar, blind_zone_scale);
+        let p_smoothing = 1.0;
+        let out = process_swath(&swath_raw, &pose, &altitude, &sound, &sonar, blind_zone_scale, p_smoothing);
 
         logger.log(t, &out.port, &out.starboard);
     }
