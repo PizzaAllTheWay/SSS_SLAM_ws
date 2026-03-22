@@ -32,9 +32,10 @@ pub struct AltitudeMeasurement {
 pub struct SoundSpeed {
     // Speed of sound in water [m/s]
     // Used for sonar propagation and range correction
-    pub value: f32,
+    pub value: f64,
 }
 
+#[derive(Clone)]
 pub struct SwathRaw {
     // Timestamp of ping transmission (important for sync)
     pub timestamp: f64,
@@ -44,10 +45,10 @@ pub struct SwathRaw {
     pub starboard: Vec<u8>,
 
     // Number of samples per beam (defines resolution)
-    pub samples_per_beam: u32,
+    pub samples_per_beam: u64,
 
     // Max slant range [m] used to derive resolution (slant_res = range / samples_per_beam)
-    pub max_range: f32,
+    pub max_range: f64
 }
 
 pub struct SwathProcessed {
@@ -57,10 +58,34 @@ pub struct SwathProcessed {
     // Height above seabed [m]
     pub altitude: AltitudeMeasurement,
 
-    // Sampling frequency [Hz]
-    pub sample_rate: f32,
-
     // Corrected intensity data (after filtering / normalization)
-    pub port: Vec<f32>,
-    pub starboard: Vec<f32>,
+    pub port: Vec<u8>,
+    pub starboard: Vec<u8>,
+}
+
+pub struct TransducerParams {
+    // Sonar mounting offsets relative to vehicle/body reference frame [m]
+    pub offset: Pose3D,
+
+    // Sonar beam geometry [rad]
+    pub beta: f64,  // nominal mounting / depression angle
+    pub alpha: f64, // vertical beamwidth
+
+    // Sample storage direction
+    pub is_reversed: bool, // true if samples are stored far->near
+}
+
+pub struct SonarParams {
+    pub transducer_port: TransducerParams,
+    pub transducer_stb: TransducerParams,
+}
+
+pub struct GeometricCorrection {
+    // Corrected vertical altitude from each transducer to seabed [m]
+    pub h_port: f64,
+    pub h_stb: f64,
+
+    // First-bottom-return slant range for each channel [m]
+    pub r_fbr_port: f64,
+    pub r_fbr_stb: f64,
 }

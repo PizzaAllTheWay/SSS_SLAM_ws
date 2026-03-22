@@ -261,7 +261,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             swath_processed_msg.ping_info.frequency = msg.ping_info.frequency;
             swath_processed_msg.ping_info.sound_speed = sound_speed.value;
 
-            swath_processed_msg.sample_rate = swath_processed.sample_rate;
             swath_processed_msg.samples_per_beam = msg.samples_per_beam;
             swath_processed_msg.sample0 = msg.sample0;
 
@@ -269,8 +268,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             swath_processed_msg.image.beam_count = msg.image.beam_count;
             swath_processed_msg.image.data = swath_processed
                 .port.iter()
-                .chain(swath_processed.starboard.iter())
-                .map(|v| v.clamp(0.0, 255.0) as u8)
+                .chain(&swath_processed.starboard)
+                .copied()
                 .collect();
 
             let _ = pub_swath.publish(&swath_processed_msg);

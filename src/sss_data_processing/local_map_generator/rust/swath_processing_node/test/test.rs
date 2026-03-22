@@ -84,7 +84,9 @@ fn parse_vec_u8(s: &str) -> Vec<u8> {
 
 
 fn main() {
-    let n = 10_000;
+    //let n = 10_000;
+    let n = 5_000;
+    //let n = 1_000;
 
     let pose_file = BufReader::new(File::open("test/data/pose.csv").unwrap());
     let alt_file  = BufReader::new(File::open("test/data/altitude.csv").unwrap());
@@ -124,7 +126,46 @@ fn main() {
             max_range: 30.0,
         };
 
-        let out = process_swath(&swath_raw, &pose, &altitude, &sound);
+        let sonar = SonarParams {
+            transducer_port: TransducerParams {
+                offset: Pose3D {
+                    position: Position {
+                        x: -0.2532,
+                        y:  0.082, // changed sign for port side
+                        z:  0.033,
+                    },
+                    orientation: Orientation {
+                        roll: 0.0,
+                        pitch: 0.0,
+                        yaw: 0.0,
+                    },
+                },
+                beta: 25.0_f64.to_radians(), // same for both sides
+                alpha: std::f64::consts::PI / 3.0,
+                is_reversed: true, // port is stored 1000 -> 0
+            },
+            transducer_stb: TransducerParams {
+                offset: Pose3D {
+                    position: Position {
+                        x: -0.2532,
+                        y: -0.082, // changed sign for starboard side
+                        z:  0.033,
+                    },
+                    orientation: Orientation {
+                        roll: 0.0,
+                        pitch: 0.0,
+                        yaw: 0.0,
+                    },
+                },
+                beta: 25.0_f64.to_radians(), // same for both sides
+                alpha: std::f64::consts::PI / 3.0,
+                is_reversed: false, // starboard is stored 0 -> 1000
+            },
+        };
+
+        // empirically tuned from test data
+        let blind_zone_scale = 0.35;
+        let out = process_swath(&swath_raw, &pose, &altitude, &sound, &sonar, blind_zone_scale);
 
         logger.log(t, &out.port, &out.starboard);
     }
