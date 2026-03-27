@@ -108,22 +108,49 @@ impl LoggerPose {
     }
 }
 
-// ---------- ALTITUDE ----------
-pub struct LoggerAltitude {
+// ---------- ALTITUDE DVL ----------
+pub struct LoggerAltitudeDvl {
     logger: Logger,
 }
 
-impl LoggerAltitude {
+impl LoggerAltitudeDvl {
     pub fn new() -> Self {
         Self {
-            logger: Logger::new("altitude_interpolated",
-                &["t","altitude"]
+            logger: Logger::new(
+                "altitude_dvl",
+                &["t", "h_dvl"],
             )
         }
     }
 
-    pub fn log(&mut self, t: f64, alt: f64) {
-        self.logger.log((t, alt));
+    pub fn log(&mut self, t: f64, h_dvl: f64) {
+        self.logger.log((t, h_dvl));
+    }
+}
+
+// ---------- GEOMETRIC CORRECTION ----------
+pub struct LoggerGeometricCorrection {
+    logger: Logger,
+}
+
+impl LoggerGeometricCorrection {
+    pub fn new() -> Self {
+        Self {
+            logger: Logger::new(
+                "geometric_correction",
+                &["t", "h_port", "h_stb", "r_fbr_port", "r_fbr_stb"],
+            )
+        }
+    }
+
+    pub fn log(&mut self, t: f64, g: &GeometricCorrection) {
+        self.logger.log((
+            t,
+            g.h_port,
+            g.h_stb,
+            g.r_fbr_port,
+            g.r_fbr_stb,
+        ));
     }
 }
 

@@ -24,8 +24,8 @@ pub fn process_swath(
 
     // Geometric Correction ----------
     let geometric_correction_data = _apply_geometric_correction(
-        pose,
-        altitude,
+        &pose_interpolated,
+        &altitude_interpolated,
         sonar,
     );
 
@@ -46,19 +46,10 @@ pub fn process_swath(
         &geometric_correction_data,
     );
 
-    // Slant Range Correction ----------
-    let (port, starboard) = _slant_to_ground(
-        &port,
-        &starboard,
-        swath_raw,
-        sonar,
-        &geometric_correction_data,
-    );
-
     // Output ----------
     SwathProcessed {
-        pose: pose_interpolated,
-        altitude: altitude_interpolated,
+        pose_interpolated: pose_interpolated,
+        geometric_correction_data: geometric_correction_data,
         port: port,
         starboard: starboard,
     }
@@ -139,12 +130,14 @@ fn _apply_geometric_correction(
         &sonar.transducer_stb,
     );
 
-    GeometricCorrection {
+    let geometric_correction_data = GeometricCorrection {
         h_port: h_t_port,
         h_stb: h_t_stb,
         r_fbr_port: r_fbr_port,
         r_fbr_stb: r_fbr_stb,
-    }
+    };
+
+    return geometric_correction_data;
 }
 
 // Computes corrected height of one transducer above the seabed.
@@ -176,31 +169,83 @@ fn _transducer_height(
     return h_t_transducer;
 }
 
-// Computes first-bottom-return slant range for one transducer.
+// Computes the first-bottom-return slant range for one transducer.
 //
-// After the corrected transducer height is known, the first-bottom-return range
-// is obtained from simple right-triangle beam geometry:
-//     r_fbr = h / sin(beta + alpha/2)
-//
-// Port and starboard are already handled separately through their own transducer
-// parameters and their own corrected heights.
+// Why this is needed:
+// After correcting the altitude to the actual transducer height above the seabed,
+// we still need to estimate where the first valid seabed return can physically
+// happen along the beam. That first return comes from the lower edge of the beam,
+// not from the beam center, so we compute that direction and use it to recover
+// the slant range.
 fn _first_bottom_return_slant_range(
     pose: &Pose3D,
     h_t: f64,
     transducer: &TransducerParams,
 ) -> f64 {
-    let roll = pose.orientation.roll;
+    // Build the rigid-body rotations needed to express the transducer beam in
+    // world coordinates:
+    // - `R_world_body` applies the current vehicle attitude
+    // - `R_body_transducer` applies the fixed mounting orientation of the transducer
+    // - `R_world_transducer` is the combined world-space orientation of the transducer
+    #[allow(non_snake_case)]
+    let R_world_body = Rotation3::from_euler_angles(
+        pose.orientation.roll,
+        pose.orientation.pitch,
+        pose.orientation.yaw,
+    );
 
-    let theta = transducer.beta;
-    let alpha = transducer.alpha;
+    #[allow(non_snake_case)]
+    let R_body_transducer = Rotation3::from_euler_angles(
+        transducer.offset.orientation.roll,
+        transducer.offset.orientation.pitch,
+        transducer.offset.orientation.yaw,
+    );
 
-    // y > 0 => port  => use -roll
-    // y < 0 => stb   => use +roll
-    let roll_sign = -transducer.offset.position.y.signum();
+    #[allow(non_snake_case)]
+    let R_world_transducer = R_world_body * R_body_transducer;
 
-    let angle_r_fbr = theta + alpha / 2.0 + roll_sign * roll;
+    // The beam center is defined in the transducer local frame.
+    // Here it is hardcoded as +Y because side-scan sonar transducers transmit
+    // sideways relative to their own housing/frame. Since port/starboard facing
+    // direction is already encoded in the transducer mounting orientation, this
+    // beam-center vector can stay fixed for both sides.
+    //
+    // `R_beam_center_to_lower_edge` rotates from the beam centerline to the lower
+    // beam edge. We use `alpha / 2` because `alpha` is the full vertical beamwidth,
+    // so half of it moves from the center to one edge. That lower edge is what
+    // gives the first possible seabed hit, which is exactly what we need here.
+    let beam_center_transducer = Vector3::new(
+        0.0,
+        1.0,
+        0.0
+    );
 
-    let r_fbr_transducer = h_t / angle_r_fbr.sin();
+    #[allow(non_snake_case)]
+    let R_beam_center_to_lower_edge = Rotation3::from_euler_angles(
+        transducer.alpha/2.0,
+        0.0,
+        0.0
+    );
+
+    let beam_lower_edge_transducer = R_beam_center_to_lower_edge * beam_center_transducer;
+
+    // Rotate the lower-edge beam direction into the world frame.
+    // `beam_world` is therefore the actual lower-edge beam direction after both
+    // vehicle attitude and transducer mounting have been applied.
+    //
+    // The z component gives the vertical fraction of that beam direction.
+    // Taking `abs()` removes sign dependence since we only care about downward
+    // magnitude, and `max(1e-9)` avoids division by zero if the beam ever becomes
+    // almost horizontal.
+    //
+    // The final division is just basic triangle/projection math:
+    // if vertical_drop = slant_range * vertical_fraction,
+    // then h_t = r_fbr * down_component  =>  r_fbr = h_t / down_component.
+    let beam_world = R_world_transducer * beam_lower_edge_transducer;
+
+    let down_component = beam_world.z.abs().max(1e-9);
+
+    let r_fbr_transducer = h_t/down_component;
 
     return r_fbr_transducer;
 }
@@ -622,147 +667,3 @@ fn _estimate_reflectivity_map(
     r_hat_full
 }
 // Intensity Normalization Functions (STOP) --------------------------------------------------
-
-
-
-// Slant Range Correction Functions (START) --------------------------------------------------
-// Converts both sonar channels from slant range to ground range.
-//
-// Why this is needed:
-// After blind-zone removal, the remaining samples still represent distance
-// along the acoustic path of the sonar beam. That is useful for raw sensing,
-// but not ideal for later mapping, since equal bin spacing in slant range does
-// not correspond to equal horizontal spacing on the seabed.
-//
-// This step projects each valid sample onto the seabed plane using the
-// corrected transducer height estimated earlier. In practice, this reduces the
-// across-track geometric distortion that appears when the swath is kept purely
-// in beam coordinates.
-//
-// High-level algorithm:
-// 1. Process port and starboard independently.
-// 2. Read each channel in logical near->far order.
-// 3. Convert each valid slant-range sample to horizontal ground range.
-// 4. Place the projected sample into its corresponding ground-range bin.
-// 5. Write the result back in the channel's native storage order.
-//
-// Note:
-// This implementation currently uses a direct bin remap without interpolation.
-// That means some ground bins may remain empty, but it keeps the method simple,
-// fast, and close to the raw measured structure.
-// Next phases of the sonar processing pipeline will do probabilistic interpolation
-// to fill these gaps fast and accurately
-fn _slant_to_ground(
-    port: &[u8],
-    starboard: &[u8],
-    swath: &SwathRaw,
-    sonar: &SonarParams,
-    geometric_correction_data: &GeometricCorrection,
-) -> (Vec<u8>, Vec<u8>) {
-    let port = _collect_ground_samples(
-        port,
-        geometric_correction_data.h_port,
-        sonar.transducer_port.is_reversed,
-        sonar.transducer_port.blind_zone_scale,
-        swath,
-    );
-    let starboard = _collect_ground_samples(
-        starboard,
-        geometric_correction_data.h_stb,
-        sonar.transducer_stb.is_reversed,
-        sonar.transducer_stb.blind_zone_scale,
-        swath,
-    );
-
-    return (port, starboard);
-}
-
-// Projects one channel from slant-range bins into ground-range bins.
-//
-// Why this is needed:
-// A sonar channel is sampled uniformly in slant range, but after projection to
-// the seabed the corresponding horizontal ground positions are no longer the
-// same as the original beam positions. This function remaps each valid sample
-// to the ground-range bin where it physically belongs.
-//
-// Algorithm:
-// 1. Walk through the channel in logical near->far order.
-// 2. Skip samples that were already masked out by blind-zone removal.
-// 3. Convert the current bin index into physical slant range.
-// 4. Project that slant range to horizontal ground range using flat-seabed geometry.
-// 5. Convert the ground range back to a discrete output bin index.
-// 6. Write the intensity into that projected output bin.
-//
-// Notes:
-// - The output keeps the same number of bins as the input.
-// - The channel is written back in its native storage order.
-// - No interpolation is done here; empty gaps are therefore expected.
-// - If multiple projected samples land in the same output bin, the strongest
-//   intensity is kept.
-fn _collect_ground_samples(
-    channel: &[u8],
-    h_t_transducer: f64,
-    is_reversed: bool,
-    blind_zone_scale: f64,
-    swath: &SwathRaw,
-) -> Vec<u8> {
-    let n_bins: usize = channel.len();
-    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
-
-    let mut ground_channel = vec![0u8; n_bins];
-
-    for slant_bin in 0..n_bins {
-        let source_index = if is_reversed {
-            n_bins - 1 - slant_bin
-        } else {
-            slant_bin
-        };
-
-        let intensity = channel[source_index];
-
-        // Samples already masked by the blind-zone step are invalid for seabed
-        // projection, so only nonzero returns are processed further.
-        if intensity == 0 { continue; }
-
-        // Convert the current discrete bin into physical slant range and project
-        // it onto the seabed plane. Samples that still fall below the corrected
-        // transducer height would produce invalid geometry and are skipped.
-        //
-        // NOTE:
-        // The blind-zone scale is also used here as an empirical correction.
-        // In practice, using the pure geometric slant bin directly tended to
-        // over-expand the nadir / blind-zone region. Applying the same tuning
-        // factor here gave a better match to the observed sonar image.
-        let slant_range = slant_bin as f64 * slant_resolution/blind_zone_scale;
-        if slant_range <= h_t_transducer { continue; }
-
-        let ground_range = (slant_range * slant_range - h_t_transducer * h_t_transducer).sqrt();
-
-        // Convert projected ground range back to the nearest output ground bin.
-        // Any sample that lands outside the valid channel bounds is ignored.
-        //
-        // NOTE:
-        // The same empirical scale factor is applied here as well. This is not a
-        // purely geometric correction, but a practical tuning that currently
-        // gives the best visual and spatial agreement with the real data.
-        let ground_bin = _range_to_bin(
-            swath,
-            blind_zone_scale,
-            ground_range,
-        );
-        if ground_bin >= n_bins { continue; }
-
-        // Convert the logical near->far ground bin back into the channel's native
-        // storage order before writing the projected intensity.
-        let target_index = if is_reversed {
-            n_bins - 1 - ground_bin
-        } else {
-            ground_bin
-        };
-
-        ground_channel[target_index] = ground_channel[target_index].max(intensity);
-    }
-
-    return ground_channel;
-}
-// Slant Range Correction Functions (STOP) --------------------------------------------------

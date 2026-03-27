@@ -8,7 +8,7 @@ import os
 def generate_launch_description():
     pkg_share = get_package_share_directory('local_map_generator')
 
-    swath_processing_config = os.path.join(pkg_share, 'config', 'swath_processing.yaml')
+    local_map_generator_config = os.path.join(pkg_share, 'config', 'local_map_generator_params.yaml')
 
     log_arg = DeclareLaunchArgument(
         'log',
@@ -23,7 +23,7 @@ def generate_launch_description():
             name='swath_processing_node',
             output='screen',
             parameters=[
-                swath_processing_config,
+                local_map_generator_config,
                 {'log': LaunchConfiguration('log')}
             ]
         )

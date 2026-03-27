@@ -16,7 +16,8 @@ use r2r::{
     marine_acoustic_msgs::msg::Dvl, 
     marine_acoustic_msgs::msg::RawSonarImage,
     geometry_msgs::msg::PoseStamped,
-    geometry_msgs::msg::PointStamped,
+    geometry_msgs::msg::Point32,
+    geometry_msgs::msg::PolygonStamped,
 };
 // Libraries for Swath processing ----------
 use swath_processing_node::swath_processing_lib::types::{
@@ -34,7 +35,8 @@ use swath_processing_node::swath_processing_lib::processor::{
 use swath_processing_node::swath_processing_lib::utils::{
     LoggerPerformance,
     LoggerPose,
-    LoggerAltitude,
+    LoggerAltitudeDvl,
+    LoggerGeometricCorrection,
     LoggerSwathRaw,
     LoggerSwathProcessed,
 };
@@ -69,52 +71,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(non_snake_case)]
     // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
     let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
-    let max_range = node.get_parameter::<f64>("swath_processing.max_range").ok().unwrap_or(0.0) as f64;
-    let illumination_ema_period = node.get_parameter::<i64>("swath_processing.illumination_ema_period").ok().unwrap_or(0) as usize;
-    let transducer_port_pose_position_x = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
-    let transducer_port_pose_position_y = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.y").ok().unwrap_or(0.0) as f64;
-    let transducer_port_pose_position_z = node.get_parameter::<f64>("swath_processing.transducers.port.pose.position.z").ok().unwrap_or(0.0) as f64;
-    let transducer_port_pose_orientation_roll = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
-    let transducer_port_pose_orientation_pitch = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
-    let transducer_port_pose_orientation_yaw = node.get_parameter::<f64>("swath_processing.transducers.port.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
-    let transducer_port_beta = node.get_parameter::<f64>("swath_processing.transducers.port.beta").ok().unwrap_or(0.0) as f64;
-    let transducer_port_alpha = node.get_parameter::<f64>("swath_processing.transducers.port.alpha").ok().unwrap_or(0.0) as f64;
-    let transducer_port_is_reversed = node.get_parameter::<bool>("swath_processing.transducers.port.is_reversed").ok().unwrap_or(false) as bool;
-    let transducer_port_blind_zone_scale = node.get_parameter::<f64>("swath_processing.transducers.port.blind_zone_scale").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_position_x = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.x").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_position_y = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.y").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_position_z = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.position.z").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_orientation_roll = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_orientation_pitch = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_pose_orientation_yaw = node.get_parameter::<f64>("swath_processing.transducers.starboard.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_beta = node.get_parameter::<f64>("swath_processing.transducers.starboard.beta").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_alpha = node.get_parameter::<f64>("swath_processing.transducers.starboard.alpha").ok().unwrap_or(0.0) as f64;
-    let transducer_starboard_is_reversed = node.get_parameter::<bool>("swath_processing.transducers.starboard.is_reversed").ok().unwrap_or(false) as bool;
-    let transducer_starboard_blind_zone_scale = node.get_parameter::<f64>("swath_processing.transducers.starboard.blind_zone_scale").ok().unwrap_or(0.0) as f64;
+    let max_range = node.get_parameter::<f64>("local_map_generator.max_range").ok().unwrap_or(0.0) as f64;
+    let illumination_ema_period = node.get_parameter::<i64>("local_map_generator.illumination_ema_period").ok().unwrap_or(0) as usize;
+    let transducer_port_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_position_y = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.y").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_position_z = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.z").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_roll = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_pitch = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
+    let transducer_port_pose_orientation_yaw = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_port_alpha = node.get_parameter::<f64>("local_map_generator.transducers.port.alpha").ok().unwrap_or(0.0) as f64;
+    let transducer_port_is_reversed = node.get_parameter::<bool>("local_map_generator.transducers.port.is_reversed").ok().unwrap_or(false) as bool;
+    let transducer_port_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.port.blind_zone_scale").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.x").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_y = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.y").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_position_z = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.z").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_roll = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_pitch = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_pose_orientation_yaw = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_alpha = node.get_parameter::<f64>("local_map_generator.transducers.starboard.alpha").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_is_reversed = node.get_parameter::<bool>("local_map_generator.transducers.starboard.is_reversed").ok().unwrap_or(false) as bool;
+    let transducer_starboard_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.starboard.blind_zone_scale").ok().unwrap_or(0.0) as f64;
 
     r2r::log_info!("swath_processing_node", "log: {}", LOG);
-    r2r::log_info!("swath_processing_node", "swath_processing.max_range:               {:.2} [m]",               max_range);
-    r2r::log_info!("swath_processing_node", "swath_processing.illumination_ema_period: {}       ", illumination_ema_period);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.position.z:        {:.4} [m]  ",        transducer_port_pose_position_z);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.roll:  {:.2} [rad]",  transducer_port_pose_orientation_roll);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.pitch: {:.2} [rad]", transducer_port_pose_orientation_pitch);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.pose.orientation.yaw:   {:.2} [rad]",   transducer_port_pose_orientation_yaw);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.beta:                   {:.2} [deg]",                   transducer_port_beta);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.alpha:                  {:.6} [rad]",                  transducer_port_alpha);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.is_reversed:            {}         ",            transducer_port_is_reversed);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.port.blind_zone_scale:       {:.4}      ",       transducer_port_blind_zone_scale);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.x:        {:.4} [m]  ",        transducer_starboard_pose_position_x);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.y:        {:.4} [m]  ",        transducer_starboard_pose_position_y);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.position.z:        {:.4} [m]  ",        transducer_starboard_pose_position_z);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.roll:  {:.2} [rad]",  transducer_starboard_pose_orientation_roll);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.pitch: {:.2} [rad]", transducer_starboard_pose_orientation_pitch);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.pose.orientation.yaw:   {:.2} [rad]",   transducer_starboard_pose_orientation_yaw);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.beta:                   {:.2} [deg]",                   transducer_starboard_beta);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.alpha:                  {:.6} [rad]",                  transducer_starboard_alpha);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.is_reversed:            {}         ",            transducer_starboard_is_reversed);
-    r2r::log_info!("swath_processing_node", "swath_processing.transducers.starboard.blind_zone_scale:       {:.4}      ",       transducer_starboard_blind_zone_scale);
+    r2r::log_info!("swath_processing_node", "local_map_generator.max_range:               {:.2} [m]",               max_range);
+    r2r::log_info!("swath_processing_node", "local_map_generator.illumination_ema_period: {}       ", illumination_ema_period);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.z:        {:.4} [m]  ",        transducer_port_pose_position_z);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.roll:  {:.2} [deg]",  transducer_port_pose_orientation_roll);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.pitch: {:.2} [deg]", transducer_port_pose_orientation_pitch);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.yaw:   {:.2} [deg]",   transducer_port_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.alpha:                  {:.6} [deg]",                  transducer_port_alpha);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.is_reversed:            {}         ",            transducer_port_is_reversed);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.blind_zone_scale:       {:.4}      ",       transducer_port_blind_zone_scale);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.x:        {:.4} [m]  ",        transducer_starboard_pose_position_x);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.y:        {:.4} [m]  ",        transducer_starboard_pose_position_y);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.z:        {:.4} [m]  ",        transducer_starboard_pose_position_z);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.roll:  {:.2} [deg]",  transducer_starboard_pose_orientation_roll);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.pitch: {:.2} [deg]", transducer_starboard_pose_orientation_pitch);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.yaw:   {:.2} [deg]",   transducer_starboard_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.alpha:                  {:.6} [deg]",                  transducer_starboard_alpha);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.is_reversed:            {}         ",            transducer_starboard_is_reversed);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.blind_zone_scale:       {:.4}      ",       transducer_starboard_blind_zone_scale);
 
     let sonar = SonarParams {
         transducer_port: TransducerParams {
@@ -125,13 +123,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     z: transducer_port_pose_position_z,
                 },
                 orientation: Orientation {
-                    roll:  transducer_port_pose_orientation_roll,
-                    pitch: transducer_port_pose_orientation_pitch,
-                    yaw:   transducer_port_pose_orientation_yaw,
+                    roll:  transducer_port_pose_orientation_roll.to_radians(),
+                    pitch: transducer_port_pose_orientation_pitch.to_radians(),
+                    yaw:   transducer_port_pose_orientation_yaw.to_radians(),
                 },
             },
-            beta: transducer_port_beta.to_radians(),
-            alpha: transducer_port_alpha,
+            alpha: transducer_port_alpha.to_radians(),
             is_reversed: transducer_port_is_reversed,
             blind_zone_scale: transducer_port_blind_zone_scale,
         },
@@ -143,13 +140,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     z: transducer_starboard_pose_position_z,
                 },
                 orientation: Orientation {
-                    roll:  transducer_starboard_pose_orientation_roll,
-                    pitch: transducer_starboard_pose_orientation_pitch,
-                    yaw:   transducer_starboard_pose_orientation_yaw,
+                    roll:  transducer_starboard_pose_orientation_roll.to_radians(),
+                    pitch: transducer_starboard_pose_orientation_pitch.to_radians(),
+                    yaw:   transducer_starboard_pose_orientation_yaw.to_radians(),
                 },
             },
-            beta: transducer_starboard_beta.to_radians(),
-            alpha: transducer_starboard_alpha,
+            alpha: transducer_starboard_alpha.to_radians(),
             is_reversed: transducer_starboard_is_reversed,
             blind_zone_scale: transducer_starboard_blind_zone_scale,
         },
@@ -162,14 +158,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Publishers ----------
     let pub_pose = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/swath/pose", QosProfile::default())?;
-    let pub_altitude = node.create_publisher::<PointStamped>("/sss_slam/data_processing/swath/altitude", QosProfile::default())?;
+    let pub_geometric_correction = node.create_publisher::<PolygonStamped>("/sss_slam/data_processing/swath/geometric_correction", QosProfile::default())?;
     let pub_swath = node.create_publisher::<RawSonarImage>("/sss_slam/data_processing/swath/processed", QosProfile::default())?;
     
     // Loggers ----------
     // If logging is enabled, these logger instances are created and used for data logging
     let logger_performance = if LOG { Some(LoggerPerformance::new()) } else { None };
     let logger_pose = if LOG { Some(LoggerPose::new()) } else { None };
-    let logger_altitude = if LOG { Some(LoggerAltitude::new()) } else { None };
+    let logger_altitude_dvl = if LOG { Some(LoggerAltitudeDvl::new()) } else { None };
+    let logger_geometric_correction = if LOG { Some(LoggerGeometricCorrection::new()) } else { None };
     let logger_swath_raw = if LOG { Some(LoggerSwathRaw::new()) } else { None };
     let logger_swath_processed = if LOG { Some(LoggerSwathProcessed::new()) } else { None };
     // Initialize ROS2 (STOP) --------------------------------------------------
@@ -240,13 +237,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pose_clone = pose_shared.clone();
     let altitude_clone = altitude_shared.clone();
 
-    let pub_swath = pub_swath.clone();
-
     // If logging is enabled, these logger instances are copied and transferred ownership to be used for data logging
     // Move loggers into the async closure (ownership transfer) so they can be mutably used inside "move" context
     let mut logger_performance = logger_performance;
     let mut logger_pose = logger_pose;
-    let mut logger_altitude = logger_altitude;
+    let mut logger_altitude_dvl = logger_altitude_dvl;
+    let mut logger_geometric_correction = logger_geometric_correction;
     let mut logger_swath_raw = logger_swath_raw;
     let mut logger_swath_processed = logger_swath_processed;
 
@@ -310,14 +306,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pose_msg.header.stamp = msg.header.stamp.clone();
             pose_msg.header.frame_id = "base_link".to_string();
 
-            pose_msg.pose.position.x = swath_processed.pose.position.x;
-            pose_msg.pose.position.y = swath_processed.pose.position.y;
-            pose_msg.pose.position.z = swath_processed.pose.position.z;
+            pose_msg.pose.position.x = swath_processed.pose_interpolated.position.x;
+            pose_msg.pose.position.y = swath_processed.pose_interpolated.position.y;
+            pose_msg.pose.position.z = swath_processed.pose_interpolated.position.z;
 
             let quat = UnitQuaternion::from_euler_angles(
-                swath_processed.pose.orientation.roll,
-                swath_processed.pose.orientation.pitch,
-                swath_processed.pose.orientation.yaw,
+                swath_processed.pose_interpolated.orientation.roll,
+                swath_processed.pose_interpolated.orientation.pitch,
+                swath_processed.pose_interpolated.orientation.yaw,
             );
             let q = quat.quaternion();
             pose_msg.pose.orientation.x = q.i;
@@ -327,14 +323,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _ = pub_pose.publish(&pose_msg);
 
-            // Altitude 
-            let mut altitude_msg = PointStamped::default();
-            altitude_msg.header.stamp = msg.header.stamp.clone();
-            altitude_msg.header.frame_id = "base_link".to_string();
+            // Geometric Correction
+            // points[n] = (x         , y  ,      z) // Geometry description
+            // points[0] = (r_fbr_port, 0.0, h_port) // Port geometry
+            // points[1] = (r_fbr_stb , 0.0,  h_stb) // Starboard geometry
+            let mut geometric_correction_msg = PolygonStamped::default();
+            geometric_correction_msg.header.stamp = msg.header.stamp.clone();
+            geometric_correction_msg.header.frame_id = "base_link".to_string();
 
-            altitude_msg.point.z = swath_processed.altitude.value;
+            geometric_correction_msg.polygon.points = vec![
+                Point32 {
+                    x: swath_processed.geometric_correction_data.r_fbr_port as f32,
+                    y: 0.0,
+                    z: swath_processed.geometric_correction_data.h_port as f32,
+                },
+                Point32 {
+                    x: swath_processed.geometric_correction_data.r_fbr_stb as f32,
+                    y: 0.0,
+                    z: swath_processed.geometric_correction_data.h_stb as f32,
+                },
+            ];
 
-            let _ = pub_altitude.publish(&altitude_msg);
+            let _ = pub_geometric_correction.publish(&geometric_correction_msg);
 
             // Swath Processed 
             let mut swath_processed_msg = RawSonarImage::default();
@@ -364,10 +374,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 l.log(t, &swath_raw.port, &swath_raw.starboard);
             }
             if let Some(l) = &mut logger_pose {
-                l.log(t, &swath_processed.pose);
+                l.log(t, &swath_processed.pose_interpolated);
             }
-            if let Some(l) = &mut logger_altitude {
-                l.log(t, swath_processed.altitude.value);
+            if let Some(l) = &mut logger_altitude_dvl {
+                l.log(t, altitude.value);
+            }
+            if let Some(l) = &mut logger_geometric_correction {
+                l.log(t, &swath_processed.geometric_correction_data);
             }
             if let Some(l) = &mut logger_swath_processed {
                 l.log(t, &swath_processed.port, &swath_processed.starboard);

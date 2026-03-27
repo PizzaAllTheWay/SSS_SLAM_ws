@@ -133,13 +133,12 @@ fn main() {
                         z:  0.033,
                     },
                     orientation: Orientation {
-                        roll: 0.0,
+                        roll: 25.0_f64.to_radians(), // same for both sides
                         pitch: 0.0,
-                        yaw: 0.0,
+                        yaw: 180.0_f64.to_radians(),
                     },
                 },
-                beta: 25.0_f64.to_radians(), // same for both sides
-                alpha: std::f64::consts::PI / 3.0,
+                alpha: 60.0_f64.to_radians(),
                 is_reversed: true, // port is stored 1000 -> 0
                 blind_zone_scale: 0.45, // empirically tuned from test data
             },
@@ -151,13 +150,12 @@ fn main() {
                         z:  0.033,
                     },
                     orientation: Orientation {
-                        roll: 0.0,
+                        roll: 25.0_f64.to_radians(), // same for both sides
                         pitch: 0.0,
                         yaw: 0.0,
                     },
                 },
-                beta: 25.0_f64.to_radians(), // same for both sides
-                alpha: std::f64::consts::PI / 3.0,
+                alpha: 60.0_f64.to_radians(),
                 is_reversed: false, // starboard is stored 0 -> 1000
                 blind_zone_scale: 0.35, // empirically tuned from test data
             },

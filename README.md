@@ -162,3 +162,20 @@ A more detailed explanation of how these measurements are used inside the estima
 ```
 
 This topic contains the estimated vehicle state, including **position, orientation, body-frame velocity, and associated covariance**. It is used by downstream components of the SLAM pipeline, such as the local map generation and feature extraction modules, which rely on an accurate vehicle trajectory to correctly place sonar observations in space.
+
+### sss_data_processing/state_estimator
+**Purpose:**
+
+TODO:
+
+**Subscribes:**
+
+TODO:
+
+**Intermediate:**
+
+TODO:
+
+**Publishes:**
+
+TODO

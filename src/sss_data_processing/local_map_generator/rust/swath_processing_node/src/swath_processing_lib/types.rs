@@ -45,24 +45,11 @@ pub struct SwathRaw {
     pub max_range: f64
 }
 
-pub struct SwathProcessed {
-    // Pose at ping time (interpolated)
-    pub pose: Pose3D,
-
-    // Height above seabed [m]
-    pub altitude: AltitudeMeasurement,
-
-    // Corrected intensity data (after filtering / normalization)
-    pub port: Vec<u8>,
-    pub starboard: Vec<u8>,
-}
-
 pub struct TransducerParams {
     // Sonar mounting offsets relative to vehicle/body reference frame [m]
     pub offset: Pose3D,
 
     // Sonar beam geometry [rad]
-    pub beta: f64,  // nominal mounting / depression angle
     pub alpha: f64, // vertical beamwidth
 
     // Sample storage direction
@@ -85,4 +72,16 @@ pub struct GeometricCorrection {
     // First-bottom-return slant range for each channel [m]
     pub r_fbr_port: f64,
     pub r_fbr_stb: f64,
+}
+
+pub struct SwathProcessed {
+    // Pose at ping time (interpolated)
+    pub pose_interpolated: Pose3D,
+
+    // Height above seabed [m]
+    pub geometric_correction_data: GeometricCorrection,
+
+    // Corrected intensity data (after filtering / normalization)
+    pub port: Vec<u8>,
+    pub starboard: Vec<u8>,
 }

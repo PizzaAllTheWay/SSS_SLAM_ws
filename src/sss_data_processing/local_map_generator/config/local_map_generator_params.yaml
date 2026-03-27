@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    swath_processing:
+    local_map_generator:
       # Maximum sonar slant range [m]
       # Used to compute slant resolution (range / bins) and sample_rate
       # Must match the actual sonar configuration
@@ -22,9 +22,8 @@
       #
       # Structure:
       # - pose.position: transducer offset relative to the vehicle/body reference frame [m]
-      # - pose.orientation: transducer mounting rotation relative to body frame [rad]
-      # - beta: transducer tilt / grazing geometry angle used for first-bottom-return estimation [rad]
-      # - alpha: transducer beam opening angle [rad]
+      # - pose.orientation: transducer mounting rotation relative to body frame [deg]
+      # - alpha: transducer beam opening angle [deg]
       # - is_reversed: tells whether samples are stored far->near instead of near->far
       # - blind_zone_scale: empirical correction factor for blind-zone removal
       #
@@ -53,14 +52,12 @@
               y:  0.082
               z:  0.033
             orientation:
-              # Mounting rotation in body frame [rad]
-              roll:  0.0
+              # Mounting rotation in body frame [deg]
+              roll:  25.0
               pitch: 0.0
-              yaw:   0.0
-          # Transducer beam tilt / look angle [deg]
-          beta: 25.0
-          # Beam opening angle [rad]
-          alpha: 1.0471975511965976  # pi/3
+              yaw:   180.0
+          # Beam opening angle [deg]
+          alpha: 60.0
           # True when samples are stored in reverse order (far -> near)
           is_reversed: true
           # Empirical correction used when removing the blind zone
@@ -74,14 +71,12 @@
               y: -0.082
               z:  0.033
             orientation:
-              # Mounting rotation in body frame [rad]
-              roll:  0.0
+              # Mounting rotation in body frame [deg]
+              roll:  25.0
               pitch: 0.0
               yaw:   0.0
-          # Transducer beam tilt / look angle [deg]
-          beta: 25.0
-          # Beam opening angle [rad]
-          alpha: 1.0471975511965976  # pi / 3
+          # Beam opening angle [deg]
+          alpha: 60.0
           # False when samples are stored in normal order (near -> far)
           is_reversed: false
           # Empirical correction used when removing the blind zone

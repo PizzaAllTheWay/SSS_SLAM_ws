@@ -10,26 +10,19 @@ from utils import (
 if __name__ == "__main__":
     DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
-    START_SAMPLE = 3500
-    END_SAMPLE = 4500
+    # START_SAMPLE = 3500
+    # END_SAMPLE = 4500
+
+    START_SAMPLE = 0
+    END_SAMPLE = 9000
 
     raw_df = load_csv(
         os.path.join(os.path.dirname(__file__), "../data/swath_raw.csv"),
         start_sample=START_SAMPLE,
         end_sample=END_SAMPLE,
     )
-    blind_df = load_csv(
-        get_newest_file(DATA_DIR, "swath_processed_blindzone"),
-        start_sample=START_SAMPLE,
-        end_sample=END_SAMPLE,
-    )
-    norm_df = load_csv(
-        get_newest_file(DATA_DIR, "swath_processed_normalized"),
-        start_sample=START_SAMPLE,
-        end_sample=END_SAMPLE,
-    )
-    corr_df = load_csv(
-        get_newest_file(DATA_DIR, "swath_processed_corrected"),
+    processed_df = load_csv(
+        get_newest_file(DATA_DIR, "swath_processed"),
         start_sample=START_SAMPLE,
         end_sample=END_SAMPLE,
     )
@@ -43,24 +36,8 @@ if __name__ == "__main__":
     )
 
     plot_swath(
-        blind_df,
-        title=f"Blind Zone Removed Swath [{START_SAMPLE}:{END_SAMPLE}]",
-        ylabel="Ping #",
-        xlabel="Across track",
-        zero_color="white",
-    )
-
-    plot_swath(
-        norm_df,
-        title=f"Intensity Normalized Swath [{START_SAMPLE}:{END_SAMPLE}]",
-        ylabel="Ping #",
-        xlabel="Across track",
-        zero_color="white",
-    )
-
-    plot_swath(
-        corr_df,
-        title=f"Slant Corrected Swath [{START_SAMPLE}:{END_SAMPLE}]",
+        processed_df,
+        title=f"Processed Swath [{START_SAMPLE}:{END_SAMPLE}]",
         ylabel="Ping #",
         xlabel="Across track",
         zero_color="white",
