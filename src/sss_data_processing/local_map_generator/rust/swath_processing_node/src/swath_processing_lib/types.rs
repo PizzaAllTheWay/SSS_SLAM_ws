@@ -50,7 +50,7 @@ pub struct TransducerParams {
     pub offset: Pose3D,
 
     // Sonar beam geometry [rad]
-    pub alpha: f64, // vertical beamwidth
+    pub alpha: f64, // vertical beam width
 
     // Sample storage direction
     pub is_reversed: bool, // true if samples are stored far->near
