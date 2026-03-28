@@ -532,8 +532,7 @@ fn _estimate_illumination_map(
 
     // Forward EMA pass:
     // produces a cheap first-order low-pass estimate of the illumination trend.
-    let mut ema_fwd = ExponentialMovingAverage::new(ema_period)
-        .unwrap();
+    let mut ema_fwd = ExponentialMovingAverage::new(ema_period).unwrap();
     let mut forward = Vec::<f64>::with_capacity(I.len());
     for &x in &I {
         forward.push(ema_fwd.next(x));
@@ -542,8 +541,7 @@ fn _estimate_illumination_map(
     // Reverse EMA pass:
     // run the same low-pass smoothing in the opposite direction to reduce the
     // phase lag introduced by the forward-only EMA.
-    let mut ema_rev = ExponentialMovingAverage::new(ema_period)
-        .unwrap();
+    let mut ema_rev = ExponentialMovingAverage::new(ema_period).unwrap();
     let mut backward_rev = Vec::<f64>::with_capacity(I.len());
     for &x in forward.iter().rev() {
         backward_rev.push(ema_rev.next(x));
@@ -551,7 +549,10 @@ fn _estimate_illumination_map(
 
     // Flip back so the final illumination estimate is returned in the same
     // logical near->far ordering as the extracted valid signal.
-    backward_rev.into_iter().rev().collect()
+    #[allow(non_snake_case)]
+    let L_hat = backward_rev.into_iter().rev().collect();
+
+    return L_hat;
 }
 
 // Estimates the normalized reflectivity map `R_hat` for one channel.

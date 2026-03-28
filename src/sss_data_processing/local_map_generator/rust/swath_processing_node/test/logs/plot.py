@@ -10,9 +10,6 @@ from utils import (
 if __name__ == "__main__":
     DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
-    # START_SAMPLE = 3500
-    # END_SAMPLE = 4500
-
     START_SAMPLE = 0
     END_SAMPLE = 9000
 
