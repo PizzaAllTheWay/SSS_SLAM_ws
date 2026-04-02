@@ -295,11 +295,13 @@ fn _remove_blind_zone(
     // scaling factor is applied as a practical correction.
     let bin_fbr_port = _range_to_bin(
         swath,
+        sonar.transducer_port.max_range,
         sonar.transducer_port.blind_zone_scale,
         geometric_correction_data.r_fbr_port,
     );
     let bin_fbr_stb = _range_to_bin(
         swath,
+        sonar.transducer_stb.max_range,
         sonar.transducer_stb.blind_zone_scale,
         geometric_correction_data.r_fbr_stb,
     );
@@ -332,10 +334,11 @@ fn _remove_blind_zone(
 // The result is clamped so it always stays inside the valid array bounds.
 fn _range_to_bin(
     swath: &SwathRaw,
+    max_range: f64,
     scale: f64,
     r: f64,
 ) -> usize {
-    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
+    let slant_resolution = max_range/swath.samples_per_beam as f64;
     let r_scaled = r * scale;
     let bin = (r_scaled/slant_resolution).floor();
     let bin_fbr = bin.clamp(0.0, swath.samples_per_beam as f64) as usize;
@@ -414,6 +417,7 @@ fn _intensity_normalization(
     let port_est_illum_map = _estimate_illumination_map(
         swath,
         port,
+        sonar.transducer_port.max_range,
         sonar.transducer_port.is_reversed,
         sonar.transducer_port.blind_zone_scale,
         illumination_ema_period,
@@ -422,6 +426,7 @@ fn _intensity_normalization(
     let starboard_est_illum_map = _estimate_illumination_map(
         swath,
         starboard,
+        sonar.transducer_stb.max_range,
         sonar.transducer_stb.is_reversed,
         sonar.transducer_stb.blind_zone_scale,
         illumination_ema_period,
@@ -432,6 +437,7 @@ fn _intensity_normalization(
         &port_est_illum_map,
         swath,
         port,
+        sonar.transducer_port.max_range,
         sonar.transducer_port.is_reversed,
         sonar.transducer_port.blind_zone_scale,
         geometric_correction_data.r_fbr_port,
@@ -440,6 +446,7 @@ fn _intensity_normalization(
         &starboard_est_illum_map,
         swath,
         starboard,
+        sonar.transducer_stb.max_range,
         sonar.transducer_stb.is_reversed,
         sonar.transducer_stb.blind_zone_scale,
         geometric_correction_data.r_fbr_stb,
@@ -485,6 +492,7 @@ fn _intensity_normalization(
 fn _estimate_illumination_map(
     swath: &SwathRaw,
     channel: &Vec<u8>,
+    max_range: f64,
     is_reversed: bool,
     blind_zone_scale: f64,
     illumination_ema_period: usize,
@@ -497,6 +505,7 @@ fn _estimate_illumination_map(
     // practical blind-zone scaling used elsewhere in the pipeline.
     let bin_fbr = _range_to_bin(
         swath,
+        max_range,
         blind_zone_scale,
         r_fbr,
     );
@@ -589,6 +598,7 @@ fn _estimate_reflectivity_map(
     est_illum_map: &Vec<f64>,
     swath: &SwathRaw,
     channel: &Vec<u8>,
+    max_range: f64,
     is_reversed: bool,
     blind_zone_scale: f64,
     r_fbr: f64,
@@ -600,6 +610,7 @@ fn _estimate_reflectivity_map(
     // the exact same seabed sample region.
     let bin_fbr = _range_to_bin(
         swath,
+        max_range,
         blind_zone_scale,
         r_fbr,
     );

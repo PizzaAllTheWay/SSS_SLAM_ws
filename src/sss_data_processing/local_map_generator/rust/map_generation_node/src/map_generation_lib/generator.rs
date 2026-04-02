@@ -1,6 +1,137 @@
+use super::types::*;
 
-// ! probabilistic_map_generation_node
 
+
+pub struct MapGenerator {
+    // ? NOTE: if the vraible is NOT pub var, thne it is private even if class is publisk, very nice 
+    // TODO: store V and P here
+    // TODO: store chunk data here
+    // TODO: store config / params here
+}
+
+
+
+impl MapGenerator {
+    pub fn new() -> Self {
+        Self {
+            // TODO Add stuff here
+        }
+    }
+
+    pub fn buffer_processed_swath_into_map(
+        &mut self,
+        pose: Pose3D,
+        geometric_correction: GeometricCorrection,
+        swath_processed: SwathProcessed,
+        sonar: SonarParams,
+    ) -> bool {
+        // TODO Pruning stage =====
+        // TODO Stage 1
+        // r ground stuff
+
+        // TODO Stage 2
+        // ANgle theta stuff
+
+        // TODO Stage 3
+        // Find P_m for all q
+        // Prune with emz on P_m
+
+        // TODO V_m measured whatever map idk what to say interpolated swath to polar map idk what this V_m is called ======
+        // DO calculations here
+
+        // TODO V and P and Chunk management stuff ======
+        // V + P + Chunk manage by updating age of revisited chunks here
+
+        return true;
+    }
+
+    pub fn calculate_map(
+        &mut self,
+    ) // TODO -> return map type
+    {
+        // TODO Map generation =======
+        // Chunk management prune old chunks
+        // Calculate M
+        // kNN fill
+        // Chunk Management age chunks
+    }
+
+    pub fn get_q_m(&self) {
+        // TODO
+    }
+
+    pub fn get_p_m(&self) {
+        // TODO
+    }
+
+    pub fn get_v_m(&self) {
+        // TODO
+    }
+
+    pub fn get_p(&self) {
+        // TODO
+    }
+
+    pub fn get_v(&self) {
+        // TODO
+    }
+
+    pub fn get_m(&self) {
+        // TODO
+    }
+}
+
+
+
+// Pruning Functions (START) --------------------------------------------------
+
+// Pruning Functions (STOP) --------------------------------------------------
+
+
+
+// Probabilistic Map Functions (START) --------------------------------------------------
+
+// Probabilistic Map Functions (STOP) --------------------------------------------------
+
+
+
+// Intensity Map Functions (START) --------------------------------------------------
+
+// Intensity Map Functions (STOP) --------------------------------------------------
+
+
+
+// Normalized Map Functions (START) --------------------------------------------------
+
+// Normalized Map Functions (STOP) --------------------------------------------------
+
+
+
+// Fill Inn Functions (START) --------------------------------------------------
+
+// Fill Inn Functions (STOP) --------------------------------------------------
+
+
+
+// Chunk Management Functions (START) --------------------------------------------------
+
+// Chunk Management Functions (STOP) --------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+! DELETE THIS LATER !
+? For now this might come in useful
 // Converts first-bottom-return slant range from meters into a sample/bin index.
 //
 // The conversion uses the slant-range resolution of the swath:
@@ -8,11 +139,12 @@
 //
 // The result is clamped so it always stays inside the valid array bounds.
 fn _range_to_bin(
-    swath: &SwathRaw,
+    swath: &SwathProcessed,
+    max_range: f64,
     scale: f64,
     r: f64,
 ) -> usize {
-    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
+    let slant_resolution = max_range/swath.samples_per_beam as f64;
     let r_scaled = r * scale;
     let bin = (r_scaled/slant_resolution).floor();
     let bin_fbr = bin.clamp(0.0, swath.samples_per_beam as f64) as usize;
@@ -50,13 +182,14 @@ fn _range_to_bin(
 fn _slant_to_ground(
     port: &[u8],
     starboard: &[u8],
-    swath: &SwathRaw,
+    swath: &SwathProcessed,
     sonar: &SonarParams,
     geometric_correction_data: &GeometricCorrection,
 ) -> (Vec<u8>, Vec<u8>) {
     let port = _collect_ground_samples(
         port,
         geometric_correction_data.h_port,
+        sonar.transducer_port.max_range,
         sonar.transducer_port.is_reversed,
         sonar.transducer_port.blind_zone_scale,
         swath,
@@ -64,6 +197,7 @@ fn _slant_to_ground(
     let starboard = _collect_ground_samples(
         starboard,
         geometric_correction_data.h_stb,
+        sonar.transducer_stb.max_range,
         sonar.transducer_stb.is_reversed,
         sonar.transducer_stb.blind_zone_scale,
         swath,
@@ -97,12 +231,13 @@ fn _slant_to_ground(
 fn _collect_ground_samples(
     channel: &[u8],
     h_t_transducer: f64,
+    max_range: f64,
     is_reversed: bool,
     blind_zone_scale: f64,
-    swath: &SwathRaw,
+    swath: &SwathProcessed,
 ) -> Vec<u8> {
     let n_bins: usize = channel.len();
-    let slant_resolution = swath.max_range/swath.samples_per_beam as f64;
+    let slant_resolution = max_range/swath.samples_per_beam as f64;
 
     let mut ground_channel = vec![0u8; n_bins];
 
@@ -142,6 +277,7 @@ fn _collect_ground_samples(
         // gives the best visual and spatial agreement with the real data.
         let ground_bin = _range_to_bin(
             swath,
+            max_range,
             blind_zone_scale,
             ground_range,
         );
@@ -161,3 +297,4 @@ fn _collect_ground_samples(
     return ground_channel;
 }
 // Slant Range Correction Functions (STOP) --------------------------------------------------
+*/

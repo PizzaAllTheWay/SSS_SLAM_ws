@@ -1,11 +1,6 @@
 /**:
   ros__parameters:
     local_map_generator:
-      # Maximum sonar slant range [m]
-      # Used to compute slant resolution (range / bins) and sample_rate
-      # Must match the actual sonar configuration
-      max_range: 30.0
-
       # Smoothing period used for estimating the illumination envelope during
       # intensity normalization. This helps remove slow range-dependent brightness
       # changes caused by sonar physics rather than actual seabed texture.
@@ -56,6 +51,8 @@
               roll:  25.0
               pitch: 0.0
               yaw:   180.0
+          # Maximum sonar transducer slant range [m]
+          max_range: 30.0
           # Beam opening angle [deg]
           alpha: 60.0
           # True when samples are stored in reverse order (far -> near)
@@ -75,6 +72,8 @@
               roll:  25.0
               pitch: 0.0
               yaw:   0.0
+          # Maximum sonar transducer slant range [m]
+          max_range: 30.0
           # Beam opening angle [deg]
           alpha: 60.0
           # False when samples are stored in normal order (near -> far)

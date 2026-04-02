@@ -121,7 +121,6 @@ fn main() {
             port: parse_vec_u8(s[1]),
             starboard: parse_vec_u8(s[2]),
             samples_per_beam: 1000,
-            max_range: 30.0,
         };
 
         let sonar = SonarParams {
@@ -138,6 +137,7 @@ fn main() {
                         yaw: 180.0_f64.to_radians(),
                     },
                 },
+                max_range: 30.0,
                 alpha: 60.0_f64.to_radians(),
                 is_reversed: true, // port is stored 1000 -> 0
                 blind_zone_scale: 0.45, // empirically tuned from test data
@@ -155,6 +155,7 @@ fn main() {
                         yaw: 0.0,
                     },
                 },
+                max_range: 30.0,
                 alpha: 60.0_f64.to_radians(),
                 is_reversed: false, // starboard is stored 0 -> 1000
                 blind_zone_scale: 0.35, // empirically tuned from test data

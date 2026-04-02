@@ -40,14 +40,14 @@ pub struct SwathRaw {
 
     // Number of samples per beam (defines resolution)
     pub samples_per_beam: u64,
-
-    // Max slant range [m] used to derive resolution (slant_res = range / samples_per_beam)
-    pub max_range: f64
 }
 
 pub struct TransducerParams {
     // Sonar mounting offsets relative to vehicle/body reference frame [m]
     pub offset: Pose3D,
+
+    // Max slant range [m]
+    pub max_range: f64,
 
     // Sonar beam geometry [rad]
     pub alpha: f64, // vertical beam width

@@ -11,6 +11,8 @@ use futures::{
 };
 // Libraries for ROS2 ----------
 use r2r::{
+    Context,
+    Node,
     QosProfile, 
     nav_msgs::msg::Odometry, 
     marine_acoustic_msgs::msg::Dvl, 
@@ -64,14 +66,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     // Node ----------
-    let ctx = r2r::Context::create()?;
-    let mut node = r2r::Node::create(ctx, "swath_processing_node", "")?;
+    let ctx = Context::create()?;
+    let mut node = Node::create(ctx, "swath_processing_node", "")?;
 
     // Parameters ----------
     #[allow(non_snake_case)]
     // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
     let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
-    let max_range = node.get_parameter::<f64>("local_map_generator.max_range").ok().unwrap_or(0.0) as f64;
     let illumination_ema_period = node.get_parameter::<i64>("local_map_generator.illumination_ema_period").ok().unwrap_or(0) as usize;
     let transducer_port_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
     let transducer_port_pose_position_y = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.y").ok().unwrap_or(0.0) as f64;
@@ -79,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transducer_port_pose_orientation_roll = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
     let transducer_port_pose_orientation_pitch = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
     let transducer_port_pose_orientation_yaw = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_port_max_range = node.get_parameter::<f64>("local_map_generator.transducers.port.max_range").ok().unwrap_or(0.0) as f64;
     let transducer_port_alpha = node.get_parameter::<f64>("local_map_generator.transducers.port.alpha").ok().unwrap_or(0.0) as f64;
     let transducer_port_is_reversed = node.get_parameter::<bool>("local_map_generator.transducers.port.is_reversed").ok().unwrap_or(false) as bool;
     let transducer_port_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.port.blind_zone_scale").ok().unwrap_or(0.0) as f64;
@@ -88,12 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transducer_starboard_pose_orientation_roll = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.roll").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_pose_orientation_pitch = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.pitch").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_pose_orientation_yaw = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.orientation.yaw").ok().unwrap_or(0.0) as f64;
+    let transducer_starboard_max_range = node.get_parameter::<f64>("local_map_generator.transducers.starboard.max_range").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_alpha = node.get_parameter::<f64>("local_map_generator.transducers.starboard.alpha").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_is_reversed = node.get_parameter::<bool>("local_map_generator.transducers.starboard.is_reversed").ok().unwrap_or(false) as bool;
     let transducer_starboard_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.starboard.blind_zone_scale").ok().unwrap_or(0.0) as f64;
 
     r2r::log_info!("swath_processing_node", "log: {}", LOG);
-    r2r::log_info!("swath_processing_node", "local_map_generator.max_range:               {:.2} [m]",               max_range);
     r2r::log_info!("swath_processing_node", "local_map_generator.illumination_ema_period: {}       ", illumination_ema_period);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
@@ -101,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.roll:  {:.2} [deg]",  transducer_port_pose_orientation_roll);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.pitch: {:.2} [deg]", transducer_port_pose_orientation_pitch);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.orientation.yaw:   {:.2} [deg]",   transducer_port_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.max_range:              {:.2} [m]  ",              transducer_port_max_range);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.alpha:                  {:.6} [deg]",                  transducer_port_alpha);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.is_reversed:            {}         ",            transducer_port_is_reversed);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.blind_zone_scale:       {:.4}      ",       transducer_port_blind_zone_scale);
@@ -110,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.roll:  {:.2} [deg]",  transducer_starboard_pose_orientation_roll);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.pitch: {:.2} [deg]", transducer_starboard_pose_orientation_pitch);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.orientation.yaw:   {:.2} [deg]",   transducer_starboard_pose_orientation_yaw);
+    r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.max_range:              {:.2} [m]  ",              transducer_starboard_max_range);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.alpha:                  {:.6} [deg]",                  transducer_starboard_alpha);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.is_reversed:            {}         ",            transducer_starboard_is_reversed);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.blind_zone_scale:       {:.4}      ",       transducer_starboard_blind_zone_scale);
@@ -128,6 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     yaw:   transducer_port_pose_orientation_yaw.to_radians(),
                 },
             },
+            max_range: transducer_port_max_range,
             alpha: transducer_port_alpha.to_radians(),
             is_reversed: transducer_port_is_reversed,
             blind_zone_scale: transducer_port_blind_zone_scale,
@@ -145,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     yaw:   transducer_starboard_pose_orientation_yaw.to_radians(),
                 },
             },
+            max_range: transducer_starboard_max_range,
             alpha: transducer_starboard_alpha.to_radians(),
             is_reversed: transducer_starboard_is_reversed,
             blind_zone_scale: transducer_starboard_blind_zone_scale,
@@ -284,7 +290,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 port,
                 starboard,
                 samples_per_beam: msg.samples_per_beam as u64,
-                max_range: max_range,
             };
 
             // Acquire shared resources -----

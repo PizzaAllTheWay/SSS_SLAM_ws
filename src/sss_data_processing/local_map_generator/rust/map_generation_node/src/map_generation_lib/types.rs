@@ -23,16 +23,6 @@ pub struct Pose3D {
     pub orientation: Orientation,
 }
 
-pub struct TransducerParams {
-    // Blind zone compensation factor
-    pub blind_zone_scale: f64, // empirically tuned from test data
-}
-
-pub struct SonarParams {
-    pub transducer_port: TransducerParams,
-    pub transducer_stb: TransducerParams,
-}
-
 pub struct GeometricCorrection {
     // Corrected vertical altitude from each transducer to seabed [m]
     pub h_port: f64,
@@ -44,13 +34,35 @@ pub struct GeometricCorrection {
 }
 
 pub struct SwathProcessed {
-    // Pose at ping time (interpolated)
-    pub pose_interpolated: Pose3D,
-
-    // Height above seabed [m]
-    pub geometric_correction_data: GeometricCorrection,
+    // Timestamp of swath processed (important for sync)
+    pub timestamp: f64,
 
     // Corrected intensity data (after filtering / normalization)
     pub port: Vec<u8>,
     pub starboard: Vec<u8>,
+
+    // Number of samples per beam (defines resolution)
+    pub samples_per_beam: u64,
+}
+
+pub struct TransducerParams {
+    // Sonar mounting offsets relative to vehicle/body reference frame [m]
+    pub offset: Pose3D,
+
+    // Max slant range [m]
+    pub max_range: f64,
+
+    // Sonar beam geometry [rad]
+    pub alpha: f64, // vertical beam width
+
+    // Sample storage direction
+    pub is_reversed: bool, // true if samples are stored far->near
+
+    // Blind zone compensation factor
+    pub blind_zone_scale: f64, // empirically tuned from test data
+}
+
+pub struct SonarParams {
+    pub transducer_port: TransducerParams,
+    pub transducer_stb: TransducerParams,
 }

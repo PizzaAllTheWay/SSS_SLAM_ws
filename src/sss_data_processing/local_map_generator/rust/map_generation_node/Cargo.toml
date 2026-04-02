@@ -1,5 +1,5 @@
 [package]
-name = "swath_processing_node"
+name = "map_generation_node"
 version = "0.1.0"
 edition = "2021"
 
