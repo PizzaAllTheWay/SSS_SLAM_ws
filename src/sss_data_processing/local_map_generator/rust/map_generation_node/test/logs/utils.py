@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import cm
 from matplotlib.widgets import Slider
-import numpy as np
 
 
 
@@ -17,6 +16,7 @@ def get_newest_file(directory, prefix=None):
     if not files:
         raise FileNotFoundError("No matching csv files found")
     return max(files, key=os.path.getctime)
+
 
 def load_csv(path, start_sample=None, end_sample=None, start_t=None, end_t=None):
     df = pd.read_csv(path)
@@ -35,13 +35,15 @@ def load_csv(path, start_sample=None, end_sample=None, start_t=None, end_t=None)
 
 
 
-# Q_m HELPERS ----------
-def parse_qm_string(cell_map_m_str):
+# CELL MAP M HELPERS ----------
+def parse_cell_map_m_string(cell_map_m_str):
     if pd.isna(cell_map_m_str) or not str(cell_map_m_str).strip():
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), np.array([]), np.array([])
 
     xs = []
     ys = []
+    ps = []
+    vs = []
 
     for item in str(cell_map_m_str).split("|"):
         item = item.strip()
@@ -49,13 +51,23 @@ def parse_qm_string(cell_map_m_str):
             continue
 
         parts = item.split()
+
+        # Expected:
+        # q_m.x q_m.y p_m v_m
         if len(parts) != 4:
             continue
 
         xs.append(float(parts[0]))
         ys.append(float(parts[1]))
+        ps.append(float(parts[2]))
+        vs.append(float(parts[3]))
 
-    return np.array(xs), np.array(ys)
+    return (
+        np.array(xs),
+        np.array(ys),
+        np.array(ps),
+        np.array(vs),
+    )
 
 
 def get_closest_sample_idx(df, t_target):
@@ -87,41 +99,43 @@ def parse_array(col, target_len=None):
 
 
 
-# COMBINED PLOT ----------
-def plot_qm_and_swath_interactive(
+# COMMON PLOT ----------
+def plot_cell_map_m_and_swath_interactive(
     cell_map_m_df,
     pose_df,
     swath_df,
-    title="Q_m and Processed Swath",
-    q_ylabel="y [m]",
-    q_xlabel="x [m]",
+    left_mode="q_m",   # "q_m" or "p_m"
+    title="CellMapM and Processed Swath",
+    left_ylabel="y [m]",
+    left_xlabel="x [m]",
     swath_xlabel="Across track",
     zero_color="white",
     cmap_name="copper",
+    p_m_cmap_name="viridis",
 ):
     pose_path_color = "gray"
     q_m_color = "blue"
     pose_color = "orange"
     arrow_color = "black"
     time_line_color = "red"
-    
-    yaw_offset = -np.pi/2.0
 
+    yaw_offset = -np.pi / 2.0
+
+    # Build swath image
     port = parse_array(swath_df["port"])
     stb = parse_array(swath_df["starboard"])
     swath = np.hstack([port, stb])
 
     swath_masked = np.ma.masked_where(swath == 0, swath)
 
-    cmap = cm.get_cmap(cmap_name).copy()
-    cmap.set_bad(color=zero_color)
+    swath_cmap = cm.get_cmap(cmap_name).copy()
+    swath_cmap.set_bad(color=zero_color)
 
     valid = swath[swath != 0]
     vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
     vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
 
-    # Use one common time origin for everything.
-    # This keeps the relative-time axis consistent even if one file starts later.
+    # Common relative time origin
     t0 = min(
         float(cell_map_m_df["t"].iloc[0]),
         float(pose_df["t"].iloc[0]),
@@ -134,11 +148,11 @@ def plot_qm_and_swath_interactive(
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     plt.subplots_adjust(bottom=0.18)
 
-    # right side fixed swath
+    # Right side: fixed swath
     axes[1].imshow(
         swath_masked,
         aspect="auto",
-        cmap=cmap,
+        cmap=swath_cmap,
         interpolation="nearest",
         vmin=vmin,
         vmax=vmax,
@@ -148,20 +162,21 @@ def plot_qm_and_swath_interactive(
     axes[1].set_ylabel("t [s]")
     axes[1].set_xlabel(swath_xlabel)
 
-    # left side initial sample
+    # Initial sample
     sample_idx = len(cell_map_m_df) - 1
 
     cell_map_m_row = cell_map_m_df.iloc[sample_idx]
     t_abs = float(cell_map_m_row["t"])
     t_rel = t_abs - t0
-    qx, qy = parse_qm_string(cell_map_m_row["cell_map_m"])
+
+    qx, qy, pm, vm = parse_cell_map_m_string(cell_map_m_row["cell_map_m"])
     pose_row = get_closest_pose_row(pose_df, t_abs)
 
     pose_x = float(pose_row["x"])
     pose_y = float(pose_row["y"])
     yaw = float(pose_row["yaw"]) + yaw_offset
 
-    # background: all pose positions
+    # Background pose path
     axes[0].scatter(
         pose_df["x"].to_numpy(),
         pose_df["y"].to_numpy(),
@@ -171,15 +186,37 @@ def plot_qm_and_swath_interactive(
         label="Pose path",
     )
 
-    scatter = axes[0].scatter(
-        qx, qy,
-        s=6,
-        color=q_m_color,
-        label=f"Q_m (n={len(qx)})",
-    )
+    colorbar = None
+
+    if left_mode == "q_m":
+        scatter = axes[0].scatter(
+            qx,
+            qy,
+            s=6,
+            color=q_m_color,
+            label=f"Q_m (n={len(qx)})",
+        )
+        left_title = f"Q_m at t={t_rel:.6f}"
+
+    elif left_mode == "p_m":
+        scatter = axes[0].scatter(
+            qx,
+            qy,
+            s=10,
+            c=pm if len(pm) > 0 else np.array([]),
+            cmap=p_m_cmap_name,
+            label=f"P_m (n={len(qx)})",
+        )
+        colorbar = fig.colorbar(scatter, ax=axes[0])
+        colorbar.set_label("P_m")
+        left_title = f"P_m at t={t_rel:.6f}"
+
+    else:
+        raise ValueError("left_mode must be 'q_m' or 'p_m'")
 
     pose_scatter = axes[0].scatter(
-        [pose_x], [pose_y],
+        [pose_x],
+        [pose_y],
         s=80,
         marker="x",
         color=pose_color,
@@ -190,14 +227,16 @@ def plot_qm_and_swath_interactive(
     dx = arrow_len * np.cos(yaw)
     dy = arrow_len * np.sin(yaw)
     arrow = axes[0].arrow(
-        pose_x, pose_y, dx, dy,
+        pose_x,
+        pose_y,
+        dx,
+        dy,
         head_width=0.35,
         head_length=0.55,
         length_includes_head=True,
         color=arrow_color,
     )
 
-    # red horizontal time marker on swath image
     time_line = axes[1].axhline(
         y=t_rel,
         linewidth=1.5,
@@ -205,16 +244,16 @@ def plot_qm_and_swath_interactive(
         label="Selected time",
     )
 
-    axes[0].set_title(f"Q_m at t={t_rel:.6f}")
-    axes[0].set_ylabel(q_ylabel)
-    axes[0].set_xlabel(q_xlabel)
+    axes[0].set_title(left_title)
+    axes[0].set_ylabel(left_ylabel)
+    axes[0].set_xlabel(left_xlabel)
     axes[0].axis("equal")
     axes[0].grid(True)
     axes[0].legend()
 
     axes[1].legend()
 
-    # slider
+    # Slider by time
     ax_slider = plt.axes([0.15, 0.05, 0.7, 0.04])
     slider = Slider(
         ax=ax_slider,
@@ -233,7 +272,7 @@ def plot_qm_and_swath_interactive(
         idx = get_closest_sample_idx(cell_map_m_df, t_abs)
         cell_map_m_row = cell_map_m_df.loc[idx]
 
-        qx, qy = parse_qm_string(cell_map_m_row["cell_map_m"])
+        qx, qy, pm, vm = parse_cell_map_m_string(cell_map_m_row["cell_map_m"])
         pose_row = get_closest_pose_row(pose_df, t_abs)
 
         pose_x = float(pose_row["x"])
@@ -245,13 +284,23 @@ def plot_qm_and_swath_interactive(
         else:
             scatter.set_offsets(np.empty((0, 2)))
 
+        if left_mode == "p_m":
+            if len(pm) > 0:
+                scatter.set_array(pm)
+                scatter.set_clim(vmin=float(pm.min()), vmax=float(pm.max()))
+            else:
+                scatter.set_array(np.array([]))
+
         pose_scatter.set_offsets(np.array([[pose_x, pose_y]]))
 
         arrow.remove()
         dx = arrow_len * np.cos(yaw)
         dy = arrow_len * np.sin(yaw)
         arrow = axes[0].arrow(
-            pose_x, pose_y, dx, dy,
+            pose_x,
+            pose_y,
+            dx,
+            dy,
             head_width=0.35,
             head_length=0.55,
             length_includes_head=True,
@@ -260,8 +309,13 @@ def plot_qm_and_swath_interactive(
 
         time_line.set_ydata([t_rel, t_rel])
 
-        scatter.set_label(f"Q_m (n={len(qx)})")
-        axes[0].set_title(f"Q_m at t={t_rel:.6f}")
+        if left_mode == "q_m":
+            scatter.set_label(f"Q_m (n={len(qx)})")
+            axes[0].set_title(f"Q_m at t={t_rel:.6f}")
+        else:
+            scatter.set_label(f"P_m (n={len(qx)})")
+            axes[0].set_title(f"P_m at t={t_rel:.6f}")
+
         axes[0].legend()
         fig.canvas.draw_idle()
 
@@ -269,3 +323,33 @@ def plot_qm_and_swath_interactive(
 
     fig.suptitle(title)
     plt.show()
+
+
+# WRAPPERS ----------
+def plot_qm_and_swath_interactive(
+    cell_map_m_df,
+    pose_df,
+    swath_df,
+    title="Q_m and Processed Swath",
+):
+    plot_cell_map_m_and_swath_interactive(
+        cell_map_m_df=cell_map_m_df,
+        pose_df=pose_df,
+        swath_df=swath_df,
+        left_mode="q_m",
+        title=title,
+    )
+
+def plot_pm_and_swath_interactive(
+    cell_map_m_df,
+    pose_df,
+    swath_df,
+    title="P_m and Processed Swath",
+):
+    plot_cell_map_m_and_swath_interactive(
+        cell_map_m_df=cell_map_m_df,
+        pose_df=pose_df,
+        swath_df=swath_df,
+        left_mode="p_m",
+        title=title,
+    )

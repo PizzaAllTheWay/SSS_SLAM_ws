@@ -1,11 +1,11 @@
 use std::f64::consts::PI;
 use std::collections::{
-    HashSet,
     HashMap,
 };
 use nalgebra::{
-    Rotation2,
     Vector2,
+    Matrix2,
+    Rotation2,
 };
 use statrs::distribution::{
     ContinuousCDF, 
@@ -18,12 +18,8 @@ use super::types::*;
 
 #[allow(non_snake_case)]
 pub struct MapGenerator {
-    // ? NOTE: if the vraible is NOT pub var, thne it is private even if class is publisk, very nice 
-    // TODO: store V and P here
-    // TODO: store chunk data here
-    // TODO: store config / params here
+    // TODO: Explain each data briefly here like 1-2 sentences max and what its used for.
 
-    // TODO: MAybe we dont need Q_m if it will become part of chunks and stuff?  or maybe we stil need it though...
     sonar: SonarParams,
 
     cell_map_m: CellMapM,
@@ -34,6 +30,8 @@ pub struct MapGenerator {
 
     beam_weight_threshold: f64,
     probabilistic_map_threshold: f64,
+
+    rotation2_lookup_table: Rotation2LookupTable,
 }
 
 
@@ -46,8 +44,15 @@ impl MapGenerator {
         beam_weight_threshold: f64,
         probabilistic_map_threshold: f64,
     ) -> Self {
+        // Use the largest sonar range across both transducers when building the rotation lookup-table.
+        // This guarantees that the lookup-table angular resolution is good enough for 
+        // both sonar sides while only having to build it once.
+        let max_range_port = sonar.transducer_port.max_range;
+        let max_range_stb = sonar.transducer_stb.max_range;
+        let max_range_max = max_range_port.max(max_range_stb);
+
         Self {
-            // TODO Add stuff here
+            // TODO Add stuff here, no need to explain a lot here
             sonar,
 
             cell_map_m: CellMapM::new(),
@@ -58,6 +63,14 @@ impl MapGenerator {
 
             beam_weight_threshold,
             probabilistic_map_threshold,
+
+            // Precompute a shared 2D rotation lookup-table once during initialization.
+            // This is purely an optimization to avoid rebuilding beam-angle rotations
+            // with repeated sin/cos calls during the hot pruning loop.
+            rotation2_lookup_table: Rotation2LookupTable::new(
+                map_resolution,
+                max_range_max,
+            ),
         }
     }
 
@@ -69,19 +82,21 @@ impl MapGenerator {
         swath_processed: SwathProcessed,
     ) -> bool {
         // Pruning stage ---------- 
+        // Build and Prunes Q_m
+        // In addition caches P_m for later use
         let (cell_map_m_port, cell_map_m_stb) = _prune(
             &pose,
             &geometric_correction,
-            &swath_processed,
             &self.sonar,
             self.map_resolution,
             self.beam_weight_threshold,
             self.probabilistic_map_threshold,
+            &self.rotation2_lookup_table,
         );
 
+        // Intensity Calculation ----------
         // TODO V_m measured whatever map idk what to say interpolated swath to polar map idk what this V_m is called ======
         // DO calculations here
-
 
         // Merge Data ----------
         self.cell_map_m = _merge_cell_map_m(
@@ -128,37 +143,119 @@ impl MapGenerator {
 
 
 
+// Look Up Tables (START) --------------------------------------------------
+// Precomputed lookup table of 2D rotation matrices used to avoid rebuilding
+// a fresh rotation from sin/cos for every sampled beam angle inside the
+// pruning loop.
+//
+// Why this exists:
+// The pruning stage may evaluate millions of beam-angle samples. Constructing
+// a new 2D rotation matrix for every one of those samples is expensive because
+// it repeatedly calls trigonometric functions. To reduce that cost, we build
+// a dense table of rotation matrices once and then, during pruning, simply
+// snap each requested beam angle to the nearest precomputed rotation.
+//
+// What it stores:
+// - angle_min / angle_max: the angular range covered by the table
+// - angle_step: angular spacing between neighboring entries
+// - rotations: precomputed 2D rotation matrices over that angular range
+//
+// Tradeoff:
+// - denser table  -> better angular accuracy, more memory
+// - coarser table -> less memory, more angular quantization/aliasing error
+//
+// This is purely an optimization structure. It does not change the model
+// itself, only how efficiently the rotations are evaluated.
+pub struct Rotation2LookupTable {
+    angle_min: f64,
+    angle_max: f64,
+    angle_step: f64,
+    rotations: Vec<Matrix2<f64>>,
+}
+
+#[allow(non_snake_case)]
+impl Rotation2LookupTable {
+    // Builds a lookup table of 2D rotation matrices over a fixed angle range.
+    // angle_step controls the angular resolution of the table.
+    pub fn new(
+        map_resolution: f64,
+        max_range: f64,
+    ) -> Self {
+        let angle_min = -PI;
+        let angle_max = PI;
+
+        // Refines the angular lookup-table (LUT) resolution beyond the nominal beam sampling step.
+        // A value < 1.0 makes the LUT denser, which reduces angular quantization/aliasing error
+        // when snapping requested beam angles to the nearest precomputed rotation.
+        // This is purely an accuracy-vs-memory/performance tuning factor for the LUT.
+        // It has been chosen to be 10x factor just to be on a safe side
+        let angle_lookup_refinement_factor = 0.1;
+
+        let angle_step = angle_lookup_refinement_factor * map_resolution / max_range.max(map_resolution);
+
+        let mut rotations = Vec::new();
+
+        let mut angle = angle_min;
+        while angle <= angle_max {
+            let (sin_a, cos_a) = angle.sin_cos();
+
+            rotations.push(
+                Matrix2::new(
+                    cos_a, -sin_a,
+                    sin_a,  cos_a,
+                )
+            );
+
+            angle += angle_step;
+        }
+
+        Self {
+            angle_min,
+            angle_max,
+            angle_step,
+            rotations,
+        }
+    }
+
+    // Returns the precomputed rotation matrix closest to the requested angle.
+    pub fn R(
+        &self,
+        angle: f64,
+    ) -> &Matrix2<f64> {
+        let clamped_angle = angle.clamp(self.angle_min, self.angle_max);
+
+        let idx = ((clamped_angle - self.angle_min) / self.angle_step).round() as usize;
+        let idx = idx.min(self.rotations.len().saturating_sub(1));
+
+        &self.rotations[idx]
+    }
+}
+// Look Up Tables (STOP) --------------------------------------------------
+
+
+
 // Pruning Functions (START) --------------------------------------------------
-// TODO: WIll have to rewrite description of what teh function does
-// Builds the candidate illuminated pixel sets Q_m for the current ping,
+// Builds the temporary measurement cell maps for the current ping,
 // separately for port and starboard.
 //
-// This is the pruning/geometric footprint stage only.
-// The goal is to find all map pixels q that could physically have been
-// illuminated by each sonar side, before any probability weighting P_m
-// or intensity interpolation V_m is done.
+// This is the geometric + probabilistic pruning stage of the local map pipeline.
+// Its job is to find which discrete map cells from the current measurement m
+// are plausible candidates for illumination, while discarding unlikely samples
+// as early as possible.
 //
-// The function uses:
-// - pose: vehicle position + yaw in world frame
-// - geometric_correction: first-bottom-return ranges for each side
-// - sonar params: max range, transducer mounting side, and beam width theta
-// - map_resolution: discrete map cell size
-//
-// Output:
-// - Q_m_port: candidate pixel set for port side
-// - Q_m_stb:  candidate pixel set for starboard side
-//
-// Each side is handled independently because r_fbr, mounting offset,
-// and beam direction differ between port and starboard.
+// Each sonar side is processed independently because port and starboard have
+// different first-bottom-return ranges, mounting directions, and beam geometry.
+// The result is one temporary sparse cell map per side, ready to be merged
+// into a single measurement map for the current ping.
 #[allow(non_snake_case)]
 fn _prune(
     pose: &Pose3D,
     geometric_correction: &GeometricCorrection,
-    swath_processed: &SwathProcessed,
     sonar: &SonarParams,
     map_resolution: f64,
     beam_weight_threshold: f64,
     probabilistic_map_threshold: f64,
+    rotation2_lookup_table: &Rotation2LookupTable,
 ) -> (CellMapM, CellMapM) {
     let cell_map_m_port = _prune_side(
         pose,
@@ -170,6 +267,7 @@ fn _prune(
         map_resolution,
         beam_weight_threshold,
         probabilistic_map_threshold,
+        rotation2_lookup_table,
     );
 
     let cell_map_m_stb = _prune_side(
@@ -182,26 +280,24 @@ fn _prune(
         map_resolution,
         beam_weight_threshold,
         probabilistic_map_threshold,
+        rotation2_lookup_table,
     );
 
     return (cell_map_m_port, cell_map_m_stb);
 }
 
-// TODO: WIll have to rewrite description of what teh function does
-// Builds the candidate illuminated pixel set Q_m for one sonar side (port or starboard).
-// The function sweeps the sonar footprint from first-bottom-return r_fbr to max range r_max,
-// and across the horizontal beam width theta, generating all map pixels that could have been
-// illuminated by this transducer for the current ping.
-// 
-// The idea is:
-// 1. work in the body-ground frame first, where the side-scan beam is naturally defined,
-// 2. sweep through the curved sonar sector in range + angle,
-// 3. transform each sampled point into world coordinates using vehicle yaw + position,
-// 4. discretize those world coordinates into map pixels q,
-// 5. store q in a set so duplicates are removed automatically.
+// Builds the temporary sparse measurement cell map for one sonar side
+// (either port or starboard) for the current ping.
 //
-// The output Q_m is therefore a discrete 2D pixel set representing the full ground area
-// potentially covered by this sonar side for the current ping.
+// The function sweeps through the side-scan sonar footprint from the corrected
+// first-bottom-return range to the maximum range, and across the horizontal
+// beam opening angle. Each sampled beam point is pruned in two stages:
+// first by a cheap approximate beam-weight check, and then by the more exact
+// integrated measurement probability. Surviving samples are transformed into
+// world/map coordinates, discretized to map cells, and stored in CellMapM.
+//
+// If multiple beam samples land in the same discrete map cell, only one cell
+// entry is kept and the strongest probability for that cell is preserved.
 #[allow(non_snake_case)]
 fn _prune_side(
     pose: &Pose3D,
@@ -213,6 +309,7 @@ fn _prune_side(
     map_resolution: f64,
     beam_weight_threshold: f64,
     probabilistic_map_threshold: f64,
+    rotation2_lookup_table: &Rotation2LookupTable,
 ) -> CellMapM {
     // Store discrete map cells together with their data.
     // Key = discrete map index
@@ -234,7 +331,7 @@ fn _prune_side(
     // Precompute vehicle yaw rotation in 2D once for this ping.
     // Since Q_m is generated only in the horizontal ground plane, a 2D rotation
     // is sufficient and avoids the overhead of full 3D rotation objects.
-    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows
+    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows, not ideal :/
     let R_body_to_world = Rotation2::new(pose.orientation.yaw - PI/2.0);
 
     // Vehicle/body origin in world coordinates.
@@ -270,10 +367,11 @@ fn _prune_side(
             // ? NOTE: Here depending on the situation we might have to prune through 10 000 000 + pixels
             // ? NOTE: Because of this, some code clarity is discarded for the sake of optimization magic
 
-            // Rotate from beam centerline to the current beam angle inside the sector.
-            // A lightweight 2D rotation is sufficient here.
+            // Rotate from the beam centerline to the current beam angle inside the sector.
+            // A precomputed lookup-table rotation is used here instead of constructing a
+            // fresh Rotation2 every time, to avoid repeated sin/cos calls in this hot loop.
             #[allow(non_snake_case)]
-            let R_beam = Rotation2::new(local_beam_angle);
+            let R_beam = rotation2_lookup_table.R(local_beam_angle);
 
             let beam_point_body_ground = R_beam * beam_center_body_ground;
 
@@ -519,6 +617,7 @@ fn _P_m(
 // Intensity Map Functions (STOP) --------------------------------------------------
 
 
+
 // Merge Data Functions (START) --------------------------------------------------
 // Merges the port and starboard temporary measurement cell maps into one
 // combined measurement map for the current ping.
@@ -576,7 +675,6 @@ fn _merge_cell_map_m(
     return cell_map_m;
 }
 // Merge Data Functions (STOP) --------------------------------------------------
-
 
 
 
@@ -642,6 +740,7 @@ pub fn _chunk_manager_add(
 
 
 /*
+// !
 ! DELETE THIS LATER !
 ? For now this might come in useful
 // Converts first-bottom-return slant range from meters into a sample/bin index.
