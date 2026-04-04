@@ -33,6 +33,9 @@ pub struct MapGenerator {
     probabilistic_map_threshold: f64,
 
     rotation2_lookup_table: Rotation2LookupTable,
+
+    fill_inn_min_neighbors: u8,
+    fill_inn_passes: u8,
 }
 
 
@@ -45,6 +48,8 @@ impl MapGenerator {
         chunk_max_age: u32,
         beam_weight_threshold: f64,
         probabilistic_map_threshold: f64,
+        fill_inn_min_neighbors: u8,
+        fill_inn_passes: u8,
     ) -> Self {
         // Use the largest sonar range across both transducers when building the rotation lookup-table.
         // This guarantees that the lookup-table angular resolution is good enough for 
@@ -74,6 +79,9 @@ impl MapGenerator {
                 map_resolution,
                 max_range_max,
             ),
+
+            fill_inn_min_neighbors,
+            fill_inn_passes,
         }
     }
 
@@ -131,7 +139,6 @@ impl MapGenerator {
         pose: &Pose3D,
     ) -> Map {
         // Map generation ----------
-        // TODO Map generation =======
         _chunk_manager_prune(
             &mut self.chunk_map,
             self.chunk_max_age,
@@ -147,8 +154,8 @@ impl MapGenerator {
 
         _fill_small_gaps(
             &mut M,
-            3,
-            3,
+            self.fill_inn_min_neighbors,
+            self.fill_inn_passes,
         );
         
         _chunk_manager_age(&mut self.chunk_map);
@@ -1000,7 +1007,7 @@ pub fn _calculate_M(
 // Fill Inn Functions (START) --------------------------------------------------
 // TODO: Explain this algorithm well
 #[allow(non_snake_case)]
-fn _fill_small_gaps(M: &mut Map, min_neighbors: usize, passes: usize) {
+fn _fill_small_gaps(M: &mut Map, min_neighbors: u8, passes: u8) {
     if M.width == 0 || M.height == 0 {
         return;
     }
@@ -1019,8 +1026,8 @@ fn _fill_small_gaps(M: &mut Map, min_neighbors: usize, passes: usize) {
                 let x0 = x.saturating_sub(1);
                 let x1 = (x + 1).min(M.width - 1);
 
-                let mut sum: u32 = 0;
-                let mut count: usize = 0;
+                let mut sum = 0;
+                let mut count = 0;
 
                 for ny in y0..=y1 {
                     for nx in x0..=x1 {

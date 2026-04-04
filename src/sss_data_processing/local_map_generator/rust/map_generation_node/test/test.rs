@@ -312,6 +312,20 @@ fn main() {
     let beam_weight_threshold = 0.9993;
 
 
+    // ! TODO: Fill In
+    // Fill in variables
+    // How many neghbous with values to actualy fill the empty pixel
+    // If fill_inn_min_neighbors high, the criteria fo rpixel to fill in is very strict, to big and no fill in wil happen (ie > 8 or more)
+    // If fill_inn_min_neighbors is to low it will fill in way to early or miht even fit things worng (ie < 1 or less)
+    // also how many lpasse we do because 1 pass will not be enough, 
+    // After 1 pass we will fill in most of the gaps but not all so need a second round
+    // The 3rd round is just to make sure there is no deadspace at all left
+    // Note that having  fill_inn_passes to high will mean preformance if real time will tank as you go over million sof pixels over and over again
+    // SO recomend to have no more than 5 fill inn passes to keep it real time
+    let fill_inn_min_neighbors = 3;
+    let fill_inn_passes = 3;
+
+
     let mut map_generator = MapGenerator::new(
         sonar,
         map_resolution,
@@ -319,6 +333,8 @@ fn main() {
         chunk_max_age,
         beam_weight_threshold,
         probabilistic_map_threshold,
+        fill_inn_min_neighbors,
+        fill_inn_passes,
     );
 
     // init logger before loop
