@@ -25,7 +25,8 @@ pub struct MapGenerator {
     cell_map_m: CellMapM,
 
     map_resolution: f64,
-    chunk_size: usize,
+    chunk_size: i64,
+    chunk_max_age: u32,
     chunk_map: ChunkMap,
 
     beam_weight_threshold: f64,
@@ -40,7 +41,8 @@ impl MapGenerator {
     pub fn new(
         sonar: SonarParams,
         map_resolution: f64,
-        chunk_size: usize,
+        chunk_size: i64,
+        chunk_max_age: u32,
         beam_weight_threshold: f64,
         probabilistic_map_threshold: f64,
     ) -> Self {
@@ -59,6 +61,7 @@ impl MapGenerator {
 
             map_resolution,
             chunk_size,
+            chunk_max_age,
             chunk_map: ChunkMap::new(),
 
             beam_weight_threshold,
@@ -77,7 +80,7 @@ impl MapGenerator {
     #[allow(non_snake_case)]
     pub fn buffer_processed_swath_into_map(
         &mut self,
-        pose: Pose3D,
+        pose: &Pose3D,
         geometric_correction: GeometricCorrection,
         swath_processed: SwathProcessed,
     ) -> bool {
@@ -95,7 +98,6 @@ impl MapGenerator {
         );
 
         // Intensity Calculation ----------
-        // Intensity Calculation ----------
         _calculate_V_m(
             &mut cell_map_m_port,
             &mut cell_map_m_stb,
@@ -112,40 +114,50 @@ impl MapGenerator {
             &cell_map_m_stb,
         );
 
-        // TODO Chunk management stuff ======
-        //_chunk_manager_add(&self.Q_m);
+        // Manage Chunks ----------
+        // Add cell_map_m data to Q, P, V
+        // In addition manage Chunk Map
+        _chunk_manager_add(
+            &self.cell_map_m,
+            &mut self.chunk_map,
+            self.chunk_size,
+        );
 
         return true;
     }
 
     pub fn calculate_map(
         &mut self,
-    ) // TODO -> return map type
-    {
+        pose: &Pose3D,
+    ) -> Map {
+        // Map generation ----------
         // TODO Map generation =======
-        // Chunk management prune old chunks
-        // Calculate M
-        // kNN fill
-        // Chunk Management age chunks
+        _chunk_manager_prune(
+            &mut self.chunk_map,
+            self.chunk_max_age,
+        );
+
+        #[allow(non_snake_case)]
+        let M = _calculate_M(
+            pose,
+            &mut self.chunk_map,
+            self.map_resolution,
+            self.chunk_size,
+        );
+
+        // TODO: kNN fill
+        
+        _chunk_manager_age(&mut self.chunk_map);
+
+        return M;
     }
 
     pub fn get_cell_map_m(&self) -> &CellMapM {
         return &self.cell_map_m;
     }
 
-    #[allow(non_snake_case)]
-    pub fn get_P(&self) {
-        // TODO
-    }
-
-    #[allow(non_snake_case)]
-    pub fn get_V(&self) {
-        // TODO
-    }
-
-    #[allow(non_snake_case)]
-    pub fn get_M(&self) {
-        // TODO
+    pub fn get_chunk_map(&self) -> &ChunkMap {
+        return &self.chunk_map;
     }
 }
 
@@ -199,7 +211,7 @@ impl Rotation2LookupTable {
         // It has been chosen to be 10x factor just to be on a safe side
         let angle_lookup_refinement_factor = 0.1;
 
-        let angle_step = angle_lookup_refinement_factor * map_resolution / max_range.max(map_resolution);
+        let angle_step = angle_lookup_refinement_factor * map_resolution/max_range.max(map_resolution);
 
         let mut rotations = Vec::new();
 
@@ -877,7 +889,101 @@ fn _merge_cell_map_m(
 
 
 // Normalized Map Functions (START) --------------------------------------------------
+// TODO: Rewrite a bit with Pose in mind as well
+// Builds the dense final map image M from the sparse chunk map.
+//
+// The output is a dense 2D pixel grid of type u8 where each pixel is computed as:
+//
+//     M = V / P
+//
+// for cells that exist in the chunk map and have nonzero probability.
+// Missing chunks / missing cells / zero-probability cells are written as 0.
+//
+// Output layout:
+// - M[row][col]
+// - row corresponds to y
+// - col corresponds to x
+#[allow(non_snake_case)]
+pub fn _calculate_M(
+    pose: &Pose3D,
+    chunk_map: &ChunkMap,
+    map_resolution: f64,
+    chunk_size: i64,
+) -> Map {
+    if chunk_map.chunks.is_empty() {
+        return Map::new(
+            Pose2DMap { 
+                x: 0,
+                y: 0,
+                yaw: pose.orientation.yaw
+            },
+            0,
+            0,
+        );
+    }
 
+    // Global chunk bounds
+    let min_chunk_x = chunk_map.chunks.keys().map(|c| c.x).min().unwrap();
+    let max_chunk_x = chunk_map.chunks.keys().map(|c| c.x).max().unwrap();
+    let min_chunk_y = chunk_map.chunks.keys().map(|c| c.y).min().unwrap();
+    let max_chunk_y = chunk_map.chunks.keys().map(|c| c.y).max().unwrap();
+
+    // Convert chunk bounds to global cell bounds
+    let min_cell_x = min_chunk_x * chunk_size;
+    let max_cell_x = (max_chunk_x + 1) * chunk_size;
+    let min_cell_y = min_chunk_y * chunk_size;
+    let max_cell_y = (max_chunk_y + 1) * chunk_size;
+
+    let width = (max_cell_x - min_cell_x) as usize;
+    let height = (max_cell_y - min_cell_y) as usize;
+
+    let pose_global_x = (pose.position.x/map_resolution).round() as i64;
+    let pose_global_y = (pose.position.y/map_resolution).round() as i64;
+
+    let pose_map = Pose2DMap {
+        x: pose_global_x - min_cell_x,
+        y: pose_global_y - min_cell_y,
+        yaw: pose.orientation.yaw,
+    };
+
+    let mut M = Map::new(pose_map, width, height);
+
+    for row in 0..height {
+        for col in 0..width {
+            let global_x = min_cell_x + col as i64;
+            let global_y = min_cell_y + row as i64;
+
+            let chunk_coord = ChunkCoord {
+                x: global_x.div_euclid(chunk_size),
+                y: global_y.div_euclid(chunk_size),
+            };
+
+            let local_cell_coord = CellCoord {
+                x: global_x.rem_euclid(chunk_size),
+                y: global_y.rem_euclid(chunk_size),
+            };
+
+            let value = if let Some(chunk) = chunk_map.chunks.get(&chunk_coord) {
+                if let Some(cell) = chunk.data.get(&local_cell_coord) {
+                    if cell.p > 0.0 {
+                        let m = cell.v/cell.p;
+                        m.clamp(0.0, 255.0) as u8
+                    } else {
+                        0 // Probability is ill defined, set value to 0 for this pixel
+                    }
+                } else {
+                    0 // Cell didn't exist, set value to 0 for this pixel
+                }
+            } else {
+                0 // Chunk didn't exist, set value to 0 for this pixel
+            };
+
+            M.set(col, row, value);
+        }
+    }
+
+    M
+}
 // Normalized Map Functions (STOP) --------------------------------------------------
 
 
@@ -889,39 +995,84 @@ fn _merge_cell_map_m(
 
 
 // Chunk Management Functions (START) --------------------------------------------------
-// TODO: For nwo we wait with this
+// Adds the current measurement cell map into the persistent chunk map.
+//
+// For each cell from the current measurement m:
+// 1. find which chunk it belongs to,
+// 2. find the local cell coordinate inside that chunk,
+// 3. allocate the chunk if needed,
+// 4. reset chunk age to 0 because it was touched this round,
+// 5. allocate the cell if needed,
+// 6. accumulate probability and probability-weighted intensity:
+//
+//      P += P_m
+//      V += P_m * V_m
+//
 #[allow(non_snake_case)]
 pub fn _chunk_manager_add(
-    Q_m: &Vec<QPixel>,
-) -> bool {
-    // TODO:
-    // loop through all q in Q_m
+    cell_map_m: &CellMapM,
+    chunk_map: &mut ChunkMap,
+    chunk_size: i64,
+) {
+    for (cell_coord_m, cell_data_m) in &cell_map_m.map_m {
+        let chunk_coord = ChunkCoord {
+            x: cell_coord_m.x_m.div_euclid(chunk_size),
+            y: cell_coord_m.y_m.div_euclid(chunk_size),
+        };
 
-    // TODO:
-    // for each q, convert world position -> discrete map cell using map_resolution
+        let local_cell_coord = CellCoord {
+            x: cell_coord_m.x_m.rem_euclid(chunk_size),
+            y: cell_coord_m.y_m.rem_euclid(chunk_size),
+        };
 
-    // TODO:
-    // from discrete map cell, compute which chunk the q belongs to using chunk_size
+        let chunk = chunk_map
+            .chunks
+            .entry(chunk_coord)
+            .or_insert_with(|| Chunk {
+                age: 0,
+                data: HashMap::new(),
+            });
 
-    // TODO:
-    // from discrete map cell, compute local cell coordinate inside that chunk
+        chunk.age = 0;
 
-    // TODO:
-    // if chunk does not exist yet, allocate it
+        let cell = chunk
+            .data
+            .entry(local_cell_coord)
+            .or_insert(CellData {
+                v: 0.0,
+                p: 0.0,
+            });
 
-    // TODO:
-    // set chunk age = 0 because this chunk was touched this round
+        cell.p += cell_data_m.p_m;
+        cell.v += cell_data_m.p_m * cell_data_m.v_m;
+    }
+}
 
-    // TODO:
-    // if cell does not exist yet inside chunk, allocate it
+// Removes/deallocates old chunks whose age has exceeded the allowed limit.
+//
+// Any chunk with age > max_age is deleted completely from the chunk map,
+// including all cell data stored inside that chunk.
+#[allow(non_snake_case)]
+pub fn _chunk_manager_prune(
+    chunk_map: &mut ChunkMap,
+    max_age: u32,
+) {
+    chunk_map
+        .chunks
+        .retain(|_, chunk| chunk.age <= max_age);
+}
 
-    // TODO:
-    // store / update the q cell in that chunk cell location
-
-    // TODO:
-    // later this is where V/P update will also happen
-
-    return true;
+// Increments the age of every active chunk by 1.
+//
+// This should typically be called once per map-update cycle after all chunks
+// that touched in the current round have been reset to age = 0.
+#[allow(non_snake_case)]
+pub fn _chunk_manager_age(
+    chunk_map: &mut ChunkMap,
+) {
+    for chunk in chunk_map.chunks.values_mut() {
+        chunk.age += 1;
+    }
 }
 // Chunk Management Functions (STOP) --------------------------------------------------
 

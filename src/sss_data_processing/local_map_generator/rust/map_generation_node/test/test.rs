@@ -78,6 +78,81 @@ impl LoggerCellMapM {
     }
 }
 
+// ---------- ChunkMap ----------
+pub struct LoggerChunkMap {
+    logger: Logger,
+}
+
+impl LoggerChunkMap {
+    pub fn new() -> Self {
+        Self {
+            logger: Logger::new("chunk_map", &["t", "chunk_map"]),
+        }
+    }
+
+    pub fn log(&mut self, t: f64, chunk_map: &ChunkMap) {
+        let chunk_str = chunk_map
+            .chunks
+            .iter()
+            .flat_map(|(chunk_coord, chunk)| {
+                chunk.data.iter().map(move |(cell_coord, cell)| {
+                    format!(
+                        "{} {} {} {} {} {} {}",
+                        chunk_coord.x,
+                        chunk_coord.y,
+                        chunk.age,
+                        cell_coord.x,
+                        cell_coord.y,
+                        cell.p,
+                        cell.v,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+
+        self.logger.writer.write_record(&[
+            t.to_string(),
+            chunk_str,
+        ]).unwrap();
+    }
+}
+
+// ---------- Map ----------
+pub struct LoggerMap {
+    logger: Logger,
+}
+
+impl LoggerMap {
+    pub fn new() -> Self {
+        Self {
+            logger: Logger::new(
+                "map",
+                &["t", "pose_x", "pose_y", "pose_yaw", "width", "height", "map"],
+            ),
+        }
+    }
+
+    pub fn log(&mut self, t: f64, map: &Map) {
+        let map_str = map
+            .data
+            .iter()
+            .flat_map(|row| row.iter().map(|v| v.to_string()))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        self.logger.writer.write_record(&[
+            t.to_string(),
+            map.pose.x.to_string(),
+            map.pose.y.to_string(),
+            map.pose.yaw.to_string(),
+            map.width.to_string(),
+            map.height.to_string(),
+            map_str,
+        ]).unwrap();
+    }
+}
+
 
 
 fn parse_vec_u8(s: &str) -> Vec<u8> {
@@ -87,14 +162,15 @@ fn parse_vec_u8(s: &str) -> Vec<u8> {
 
 
 fn main() {
-    let start_n = 3_700;
+    let start_n = 3_500;
     //let start_n = 1;
 
     //let n = 10_000;
     //let n = 5_000;
     //let n = 2_000;
     //let n = 1_000;
-    let n = 100;
+    let n = 500;
+    //let n = 100;
 
     let pose_interpolated_file = BufReader::new(File::open("test/data/pose_interpolated.csv").unwrap());
     let geometric_correction_file  = BufReader::new(File::open("test/data/geometric_correction.csv").unwrap());
@@ -166,7 +242,7 @@ fn main() {
     // - but fine details may be merged together or lost
     //
     // So in practice the sonar resolution is the best default tradeoff.
-    let map_resolution = 30.0 / 1000.0;
+    let map_resolution = 30.0/1000.0;
 
     // ! TODO: init map generator before loop
     // Chunk size is the number of pixels per chunk in each direction.
@@ -186,6 +262,12 @@ fn main() {
     //
     // 64x64 is a reasonable default starting point.
     let chunk_size = 64;
+
+    // ! TODO: Chunk age
+    // If a chunk exeeds this age
+    // Ie it havsen been visited in that aunt of full buffer cycles CALC_EVERY_N
+    // Then that chunk will get deleted
+    let chunk_max_age = 1;
 
     // ! TODO: init map generator before loop
     // THsi is a very importnat thesholding that is ecsential to making this real time
@@ -218,7 +300,7 @@ fn main() {
     // *Testing: 0.00300 =>  2 400 samples
     // *Testing: 0.00500 =>    700 samples
     // *Testing: 0.00600 =>    500 samples
-    let probabilistic_map_threshold = 0.002100;
+    let probabilistic_map_threshold = 0.002000;
 
     // ! TODO: Very imprtant early pruning
     // This is an even earlier prunning parameter
@@ -227,19 +309,22 @@ fn main() {
     // *Testing: 0.9990 =>  10 000 samples
     // *Testing: 0.9993 =>   8 000 samples
     // *Testing: 0.9995 =>   6 000 samples
-    let beam_weight_threshold = 0.9995;
+    let beam_weight_threshold = 0.9993;
 
 
     let mut map_generator = MapGenerator::new(
         sonar,
         map_resolution,
         chunk_size,
+        chunk_max_age,
         beam_weight_threshold,
         probabilistic_map_threshold,
     );
 
     // init logger before loop
     let mut logger_cell_map_m = LoggerCellMapM::new();
+    let mut logger_chunk_map = LoggerChunkMap::new();
+    let mut logger_map = LoggerMap::new();
 
     // Mapping logic
     let mut prev_t: Option<f64> = None;
@@ -277,7 +362,7 @@ fn main() {
 
         // run map buffering
         map_generator.buffer_processed_swath_into_map(
-            pose,
+            &pose,
             geometric_correction,
             swath_processed,
         );
@@ -292,14 +377,25 @@ fn main() {
         // Trigger calculate_map if time gap is too large
         ping_counter += 1;
 
+        let mut buffer_full = false;
         if ping_counter >= CALC_EVERY_N {
-            map_generator.calculate_map();
-            ping_counter = 0;
-        } else if let Some(t_prev) = prev_t {
+            buffer_full = true;
+        } 
+        else if let Some(t_prev) = prev_t {
             let t_dt = t - t_prev;
             if t_dt > CALC_DT_THRESHOLD {
-                map_generator.calculate_map();
+                buffer_full = true;
             }
+        }
+
+        if buffer_full {
+            let map = map_generator.calculate_map(&pose);
+            logger_map.log(t, &map);
+
+            let chunk_map = map_generator.get_chunk_map();
+            logger_chunk_map.log(t, chunk_map);
+            
+            ping_counter = 0;
         }
 
         prev_t = Some(t);

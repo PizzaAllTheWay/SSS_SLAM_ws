@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use r2r::example_interfaces::msg::Int64;
+
 
 
 #[derive(Clone)]
@@ -106,11 +108,11 @@ impl CellMapM {
 
 pub struct CellData {
     // Data inside each cell inside the chunk
-    pub q: QPixel, // Pixel itself coordinate
     pub v: f64,    // Accumulated intensity value
     pub p: f64,    // Accumulated probability value
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CellCoord {
     // Discrete cell coordinate inside the map/grid
     pub x: i64,
@@ -124,6 +126,7 @@ pub struct Chunk {
     pub data: HashMap<CellCoord, CellData>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkCoord {
     // Coordinate of the chunk in chunk grid
     pub x: i64,
@@ -141,5 +144,41 @@ impl ChunkMap {
         Self {
             chunks: HashMap::new(),
         }
+    }
+}
+
+pub struct Pose2DMap {
+    // Position in pixels on the map
+    pub x: i64,
+    pub y: i64,
+
+    // Yaw in [rad]
+    pub yaw: f64,
+}
+
+pub struct Map {
+    pub pose: Pose2DMap,
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<Vec<u8>>, // M[y][x]
+}
+impl Map {
+    pub fn new(pose: Pose2DMap, width: usize, height: usize) -> Self {
+        Self {
+            pose,
+            width,
+            height,
+            data: vec![vec![0u8; width]; height],
+        }
+    }
+
+    #[inline]
+    pub fn set(&mut self, x: usize, y: usize, value: u8) {
+        self.data[y][x] = value;
+    }
+
+    #[inline]
+    pub fn get(&self, x: usize, y: usize) -> u8 {
+        self.data[y][x]
     }
 }
