@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use r2r::example_interfaces::msg::Int64;
-
 
 
 #[derive(Clone)]

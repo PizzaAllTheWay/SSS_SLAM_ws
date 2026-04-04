@@ -11,6 +11,10 @@ use statrs::distribution::{
     ContinuousCDF, 
     Normal,
 };
+use kiddo::{
+    KdTree,
+    SquaredEuclidean
+};
 
 use super::types::*;
 
@@ -138,14 +142,18 @@ impl MapGenerator {
         );
 
         #[allow(non_snake_case)]
-        let M = _calculate_M(
+        let mut M = _calculate_M(
             pose,
             &mut self.chunk_map,
             self.map_resolution,
             self.chunk_size,
         );
 
-        // TODO: kNN fill
+        _fill_small_gaps(
+            &mut M,
+            3,
+            3,
+        );
         
         _chunk_manager_age(&mut self.chunk_map);
 
@@ -989,7 +997,51 @@ pub fn _calculate_M(
 
 
 // Fill Inn Functions (START) --------------------------------------------------
+// TODO: Explain this algorithm well
+#[allow(non_snake_case)]
+fn _fill_small_gaps(M: &mut Map, min_neighbors: usize, passes: usize) {
+    if M.width == 0 || M.height == 0 {
+        return;
+    }
 
+    for _ in 0..passes {
+        let src = M.data.clone();
+
+        for y in 0..M.height {
+            for x in 0..M.width {
+                if src[y][x] != 0 {
+                    continue;
+                }
+
+                let y0 = y.saturating_sub(1);
+                let y1 = (y + 1).min(M.height - 1);
+                let x0 = x.saturating_sub(1);
+                let x1 = (x + 1).min(M.width - 1);
+
+                let mut sum: u32 = 0;
+                let mut count: usize = 0;
+
+                for ny in y0..=y1 {
+                    for nx in x0..=x1 {
+                        if nx == x && ny == y {
+                            continue;
+                        }
+
+                        let v = src[ny][nx];
+                        if v != 0 {
+                            sum += v as u32;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count >= min_neighbors {
+                    M.data[y][x] = (sum as f64 / count as f64).round() as u8;
+                }
+            }
+        }
+    }
+}
 // Fill Inn Functions (STOP) --------------------------------------------------
 
 
