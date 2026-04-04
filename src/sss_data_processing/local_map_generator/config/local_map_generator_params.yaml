@@ -11,6 +11,7 @@
       # Start around 100-300 and tune experimentally for your sonar and dataset.
       illumination_ema_period: 200
 
+      # ! TODO: Rewrite this to be better and more descriptive of all variables
       # Sonar transducer configuration for each channel.
       # Each transducer block defines how that physical sonar head is mounted and how
       # its measurements should be interpreted in the swath processing pipeline.
@@ -53,8 +54,9 @@
               yaw:   180.0
           # Maximum sonar transducer slant range [m]
           max_range: 30.0
-          # Beam opening angle [deg]
-          alpha: 60.0
+          # Transducer beam geometry [deg]
+          alpha: 60.0 # vertical beam width
+          theta: 25.0 # horizontal beam width
           # True when samples are stored in reverse order (far -> near)
           is_reversed: true
           # Empirical correction used when removing the blind zone
@@ -74,8 +76,9 @@
               yaw:   0.0
           # Maximum sonar transducer slant range [m]
           max_range: 30.0
-          # Beam opening angle [deg]
-          alpha: 60.0
+          # Transducer beam geometry [deg]
+          alpha: 60.0 # vertical beam width
+          theta: 25.0 # horizontal beam width
           # False when samples are stored in normal order (near -> far)
           is_reversed: false
           # Empirical correction used when removing the blind zone

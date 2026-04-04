@@ -1,46 +1,96 @@
+use std::f64::consts::PI;
+use std::collections::{
+    HashSet,
+    HashMap,
+};
+use nalgebra::{
+    Rotation2,
+    Vector2,
+};
+use statrs::distribution::{
+    ContinuousCDF, 
+    Normal,
+};
+
 use super::types::*;
 
 
 
+#[allow(non_snake_case)]
 pub struct MapGenerator {
     // ? NOTE: if the vraible is NOT pub var, thne it is private even if class is publisk, very nice 
     // TODO: store V and P here
     // TODO: store chunk data here
     // TODO: store config / params here
+
+    // TODO: MAybe we dont need Q_m if it will become part of chunks and stuff?  or maybe we stil need it though...
+    sonar: SonarParams,
+
+    cell_map_m: CellMapM,
+
+    map_resolution: f64,
+    chunk_size: usize,
+    chunk_map: ChunkMap,
+
+    beam_weight_threshold: f64,
+    probabilistic_map_threshold: f64,
 }
 
 
 
 impl MapGenerator {
-    pub fn new() -> Self {
+    pub fn new(
+        sonar: SonarParams,
+        map_resolution: f64,
+        chunk_size: usize,
+        beam_weight_threshold: f64,
+        probabilistic_map_threshold: f64,
+    ) -> Self {
         Self {
             // TODO Add stuff here
+            sonar,
+
+            cell_map_m: CellMapM::new(),
+
+            map_resolution,
+            chunk_size,
+            chunk_map: ChunkMap::new(),
+
+            beam_weight_threshold,
+            probabilistic_map_threshold,
         }
     }
 
+    #[allow(non_snake_case)]
     pub fn buffer_processed_swath_into_map(
         &mut self,
         pose: Pose3D,
         geometric_correction: GeometricCorrection,
         swath_processed: SwathProcessed,
-        sonar: SonarParams,
     ) -> bool {
-        // TODO Pruning stage =====
-        // TODO Stage 1
-        // r ground stuff
-
-        // TODO Stage 2
-        // ANgle theta stuff
-
-        // TODO Stage 3
-        // Find P_m for all q
-        // Prune with emz on P_m
+        // Pruning stage ---------- 
+        let (cell_map_m_port, cell_map_m_stb) = _prune(
+            &pose,
+            &geometric_correction,
+            &swath_processed,
+            &self.sonar,
+            self.map_resolution,
+            self.beam_weight_threshold,
+            self.probabilistic_map_threshold,
+        );
 
         // TODO V_m measured whatever map idk what to say interpolated swath to polar map idk what this V_m is called ======
         // DO calculations here
 
-        // TODO V and P and Chunk management stuff ======
-        // V + P + Chunk manage by updating age of revisited chunks here
+
+        // Merge Data ----------
+        self.cell_map_m = _merge_cell_map_m(
+            &cell_map_m_port,
+            &cell_map_m_stb,
+        );
+
+        // TODO Chunk management stuff ======
+        //_chunk_manager_add(&self.Q_m);
 
         return true;
     }
@@ -56,27 +106,22 @@ impl MapGenerator {
         // Chunk Management age chunks
     }
 
-    pub fn get_q_m(&self) {
+    pub fn get_cell_map_m(&self) -> &CellMapM {
+        return &self.cell_map_m;
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_P(&self) {
         // TODO
     }
 
-    pub fn get_p_m(&self) {
+    #[allow(non_snake_case)]
+    pub fn get_V(&self) {
         // TODO
     }
 
-    pub fn get_v_m(&self) {
-        // TODO
-    }
-
-    pub fn get_p(&self) {
-        // TODO
-    }
-
-    pub fn get_v(&self) {
-        // TODO
-    }
-
-    pub fn get_m(&self) {
+    #[allow(non_snake_case)]
+    pub fn get_M(&self) {
         // TODO
     }
 }
@@ -84,13 +129,387 @@ impl MapGenerator {
 
 
 // Pruning Functions (START) --------------------------------------------------
+// TODO: WIll have to rewrite description of what teh function does
+// Builds the candidate illuminated pixel sets Q_m for the current ping,
+// separately for port and starboard.
+//
+// This is the pruning/geometric footprint stage only.
+// The goal is to find all map pixels q that could physically have been
+// illuminated by each sonar side, before any probability weighting P_m
+// or intensity interpolation V_m is done.
+//
+// The function uses:
+// - pose: vehicle position + yaw in world frame
+// - geometric_correction: first-bottom-return ranges for each side
+// - sonar params: max range, transducer mounting side, and beam width theta
+// - map_resolution: discrete map cell size
+//
+// Output:
+// - Q_m_port: candidate pixel set for port side
+// - Q_m_stb:  candidate pixel set for starboard side
+//
+// Each side is handled independently because r_fbr, mounting offset,
+// and beam direction differ between port and starboard.
+#[allow(non_snake_case)]
+fn _prune(
+    pose: &Pose3D,
+    geometric_correction: &GeometricCorrection,
+    swath_processed: &SwathProcessed,
+    sonar: &SonarParams,
+    map_resolution: f64,
+    beam_weight_threshold: f64,
+    probabilistic_map_threshold: f64,
+) -> (CellMapM, CellMapM) {
+    let cell_map_m_port = _prune_side(
+        pose,
+        geometric_correction.r_fbr_port,
+        sonar.transducer_port.max_range,
+        &sonar.transducer_port.offset,
+        sonar.transducer_port.theta,
+        sonar.transducer_port.blind_zone_scale,
+        map_resolution,
+        beam_weight_threshold,
+        probabilistic_map_threshold,
+    );
 
+    let cell_map_m_stb = _prune_side(
+        pose,
+        geometric_correction.r_fbr_stb,
+        sonar.transducer_stb.max_range,
+        &sonar.transducer_stb.offset,
+        sonar.transducer_stb.theta,
+        sonar.transducer_stb.blind_zone_scale,
+        map_resolution,
+        beam_weight_threshold,
+        probabilistic_map_threshold,
+    );
+
+    return (cell_map_m_port, cell_map_m_stb);
+}
+
+// TODO: WIll have to rewrite description of what teh function does
+// Builds the candidate illuminated pixel set Q_m for one sonar side (port or starboard).
+// The function sweeps the sonar footprint from first-bottom-return r_fbr to max range r_max,
+// and across the horizontal beam width theta, generating all map pixels that could have been
+// illuminated by this transducer for the current ping.
+// 
+// The idea is:
+// 1. work in the body-ground frame first, where the side-scan beam is naturally defined,
+// 2. sweep through the curved sonar sector in range + angle,
+// 3. transform each sampled point into world coordinates using vehicle yaw + position,
+// 4. discretize those world coordinates into map pixels q,
+// 5. store q in a set so duplicates are removed automatically.
+//
+// The output Q_m is therefore a discrete 2D pixel set representing the full ground area
+// potentially covered by this sonar side for the current ping.
+#[allow(non_snake_case)]
+fn _prune_side(
+    pose: &Pose3D,
+    r_fbr: f64,
+    r_max: f64,
+    transducer_offset: &Pose3D,
+    theta: f64,
+    blind_zone_scale: f64,
+    map_resolution: f64,
+    beam_weight_threshold: f64,
+    probabilistic_map_threshold: f64,
+) -> CellMapM {
+    // Store discrete map cells together with their data.
+    // Key = discrete map index
+    // Value = cell data for that map pixel
+    let mut cell_map_m = CellMapM::new();
+
+    // The sonar beam spans sideways around its centerline.
+    // We therefore sweep from -theta/2 to +theta/2 around the side-looking direction.
+    let half_theta = theta/2.0;
+
+    // Determine whether this transducer points to positive body-y or negative body-y.
+    // Port and starboard are therefore handled with the same logic, only sign changes.
+    let side_sign = if transducer_offset.position.y >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+
+    // Precompute vehicle yaw rotation in 2D once for this ping.
+    // Since Q_m is generated only in the horizontal ground plane, a 2D rotation
+    // is sufficient and avoids the overhead of full 3D rotation objects.
+    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows
+    let R_body_to_world = Rotation2::new(pose.orientation.yaw - PI/2.0);
+
+    // Vehicle/body origin in world coordinates.
+    // Each beam point is rotated into world frame and then translated by this.
+    let pose_body_in_world = Vector2::new(
+        pose.position.x,
+        pose.position.y,
+    );
+
+    // Sweep outward in range from first-bottom-return to max range.
+    // For each range shell, sweep across the beam width.
+    // This naturally fills the curved illuminated sector.
+    //
+    // The first-bottom-return range is scaled here by blind_zone_scale for the
+    // same practical reason as in the swath-processing step: the pure geometric
+    // first-bottom-return estimate tends to place the blind-zone boundary too far
+    // out in real data. Applying this empirical correction makes the inner edge
+    // of the candidate illuminated region better match the actual usable sonar data.
+    let mut range_m = r_fbr * blind_zone_scale;
+
+    while range_m <= r_max {
+        let mut local_beam_angle = -half_theta;
+
+        // Beam center for the current range shell in body-ground coordinates.
+        // This is the side-looking centerline before applying the local beam angle.
+        let beam_center_body_ground = Vector2::new(
+            0.0,
+            side_sign * range_m,
+        );
+
+        while local_beam_angle <= half_theta {
+            // ? NOTE: This is where optimization is VERY important
+            // ? NOTE: Here depending on the situation we might have to prune through 10 000 000 + pixels
+            // ? NOTE: Because of this, some code clarity is discarded for the sake of optimization magic
+
+            // Rotate from beam centerline to the current beam angle inside the sector.
+            // A lightweight 2D rotation is sufficient here.
+            #[allow(non_snake_case)]
+            let R_beam = Rotation2::new(local_beam_angle);
+
+            let beam_point_body_ground = R_beam * beam_center_body_ground;
+
+            // ? NOTE: At this point we will have 10 000 000+ pixels still
+            // ? NOTE: Because of this we will have to do pruning here before insertion
+            // ? NOTE: We will calculate the probability this certain sample point is illuminated and we will drop those bellow a certain threshold
+            // ? NOTE: This will drastically decrease amount of pixels inserted into the map
+
+            // Angular beam pruning:
+            // Compute a fast approximate beam weight for this sampled point.
+            // If the point lies too far toward the beam edge, skip it immediately
+            // before doing more expensive work.
+            let p_theta_weight = _p_theta_approximation(
+                local_beam_angle,
+                half_theta,
+            );
+
+            if p_theta_weight < beam_weight_threshold {
+                // Angular step:
+                // use a range-dependent step so the arc is sampled roughly at map resolution.
+                // This avoids huge oversampling near r_min and undersampling near r_max.
+                local_beam_angle += map_resolution/range_m.max(map_resolution);
+                continue;
+            }
+
+            // Exact probabilistic beam pruning:
+            // The sample survived the cheap angular beam-weight gate, so now we
+            // evaluate the integrated measurement probability over the small
+            // angular interval represented by this sample. If that probability
+            // is still too small, skip the sample before doing world transform
+            // and map insertion.
+            let P_m = _P_m(
+                local_beam_angle,
+                half_theta,
+                map_resolution,
+                range_m,
+            );
+
+            if P_m < probabilistic_map_threshold {
+                // Angular step:
+                // use a range-dependent step so the arc is sampled roughly at map resolution.
+                // This avoids huge oversampling near r_min and undersampling near r_max.
+                local_beam_angle += map_resolution/range_m.max(map_resolution);
+                continue;
+            }
+
+            // Transform the beam point from body-ground frame into world frame.
+            let beam_point_world_ground = R_body_to_world * beam_point_body_ground + pose_body_in_world;
+
+            // Convert world position into discrete map cell index.
+            // This is the actual q pixel index used in the set.
+            let (qx, qy) = _discretize_to_q(
+                beam_point_world_ground.x,
+                beam_point_world_ground.y,
+                map_resolution,
+            );
+
+            // If multiple beam samples land in the same discrete map cell,
+            // keep only one cell entry for that location and preserve the
+            // strongest measurement probability seen so far.
+            let cell_coord_m = CellCoordM {
+                x_m: qx,
+                y_m: qy,
+            };
+
+            cell_map_m
+                .map_m
+                .entry(cell_coord_m)
+                .and_modify(|cell| {
+                    cell.p_m = cell.p_m.max(P_m);
+                })
+                .or_insert(
+                    CellDataM {
+                        q_m: QPixel {
+                            x: qx as f64 * map_resolution,
+                            y: qy as f64 * map_resolution,
+                        },
+                        v_m: 0.0,
+                        p_m: P_m,
+                    }
+                );
+
+            // Angular step:
+            // use a range-dependent step so the arc is sampled roughly at map resolution.
+            // This avoids huge oversampling near r_min and undersampling near r_max.
+            local_beam_angle += map_resolution/range_m.max(map_resolution);
+        }
+
+        // Radial step:
+        // move outward roughly one map pixel at a time.
+        range_m += map_resolution;
+    }
+
+    return cell_map_m;
+}
+
+// Converts a continuous world coordinate (x, y) into a discrete map grid index (qx, qy).
+// The map is assumed to be a uniform grid with cell size = map_resolution.
+// Each returned (qx, qy) represents the index of the pixel/cell in that grid.
+// This is used to ensure all points snap to consistent discrete locations.
+fn _discretize_to_q(
+    x: f64,
+    y: f64,
+    map_resolution: f64,
+) -> (i64, i64) {
+    let qx = (x/map_resolution).round() as i64;
+    let qy = (y/map_resolution).round() as i64;
+
+    return (qx, qy);
+}
 // Pruning Functions (STOP) --------------------------------------------------
 
 
 
 // Probabilistic Map Functions (START) --------------------------------------------------
+// Returns an approximate measurement probability for the current sampled point
+// inside the sonar beam.
+//
+// This is NOT the full probabilistic map-cell model yet.
+// The true P_m(q) should be computed as the integral of p(theta) over the
+// angular extent of the map cell q:
+//
+//     P_m(q) = ∫ p(theta) dtheta
+//
+// However, doing that full integral for every sampled point/cell during pruning stage would be too expensive.
+//
+// So for now, we use a fast pointwise approximation:
+// - treat the current sampled point as if it represents the cell
+// - evaluate the beam-density at its local beam angle
+// - use that value as an approximate P_m(q)
+//
+// This is good enough for aggressive early pruning.
+#[allow(non_snake_case)]
+fn _P_m_approximation(
+    local_beam_angle: f64,
+    beam_angle_horizontal_half: f64,
+) -> f64 {
+    return _p_theta_approximation(
+        local_beam_angle,
+        beam_angle_horizontal_half,
+    );
+}
 
+// Returns a fast approximate angular beam-weight p_theta for a given local beam angle.
+//
+// Why this approximation is used:
+// The original Gaussian beam model uses an exponential, which is too expensive
+// when evaluated millions of times during pruning. Since this stage only needs
+// a cheap center-vs-edge weighting for early rejection, we replace the full
+// Gaussian with a much faster polynomial approximation.
+//
+// Method:
+// 1. Normalize the local beam angle by the half horizontal beam width.
+// 2. This gives a dimensionless value u where:
+//      u = 0   -> beam center
+//      |u| = 1 -> beam edge
+// 3. Use the squared normalized angle to build a simple center-heavy weight.
+//
+// The approximation used is:
+//     p_theta_approx = (1 - u^2)^2,   for |u| < 1
+//     p_theta_approx = 0,             otherwise
+//
+// This keeps the same general behavior we want for pruning:
+// - strongest at the beam center
+// - smoothly decreasing toward the edges
+// - zero outside the beam
+//
+// It is NOT a physically exact beam-density model.
+// It is only a fast approximation for aggressive early pruning.
+fn _p_theta_approximation(
+    theta: f64,
+    alpha_h_half: f64,
+) -> f64 {
+    let u = (theta / alpha_h_half).abs();
+
+    if u >= 1.0 {
+        return 0.0;
+    }
+
+    let v = 1.0 - u * u;
+    let p_theta_approx = v * v;
+
+    return p_theta_approx;
+}
+
+// Returns the integrated measurement probability P_m(q) for the current sampled point.
+//
+// This function is the main probabilistic beam model used after the cheap
+// angular pruning stage. Unlike the fast approximation, it does not evaluate
+// only a single point value. Instead, it approximates the current sampled point
+// as representing a small angular interval and integrates the Gaussian beam
+// model over that interval.
+//
+// What it does:
+// 1. Estimate the angular width represented by the current sample using the
+//    current map resolution and range:
+//        delta_theta ≈ map_resolution / range_m
+// 2. Build the angular interval around the sampled beam angle:
+//        [theta_min, theta_max]
+// 3. Model the horizontal sonar beam as a zero-mean Gaussian in angle space,
+//    with standard deviation:
+//        sigma = alpha_h / 2
+// 4. Compute the integrated probability mass over that interval using the
+//    Gaussian CDF:
+//
+//        P_m(q) = ∫ p(theta) dtheta
+//               = CDF(theta_max) - CDF(theta_min)
+//
+// Why this is useful:
+// - it is much more meaningful than a single pointwise beam value
+// - it better matches the idea that each sampled point corresponds to a small
+//   finite angular region, not an infinitely thin ray
+//
+// Note:
+// This is still an approximation of the final cell probability, since the true
+// map cell footprint may not match this angular interval exactly. But it is a
+// good practical probabilistic estimate for the current pruning/mapping stage.
+#[allow(non_snake_case)]
+fn _P_m(
+    local_beam_angle: f64,
+    alpha_h_half: f64,
+    map_resolution: f64,
+    range_m: f64,
+) -> f64 {
+    let delta_theta = map_resolution / range_m.max(map_resolution);
+
+    let theta_min = local_beam_angle - 0.5 * delta_theta;
+    let theta_max = local_beam_angle + 0.5 * delta_theta;
+
+    let sigma = alpha_h_half.max(1e-12);
+    let normal = Normal::new(0.0, sigma).unwrap();
+
+    let P_m = (normal.cdf(theta_max) - normal.cdf(theta_min)).max(0.0);
+
+    return P_m;
+}
 // Probabilistic Map Functions (STOP) --------------------------------------------------
 
 
@@ -98,6 +517,66 @@ impl MapGenerator {
 // Intensity Map Functions (START) --------------------------------------------------
 
 // Intensity Map Functions (STOP) --------------------------------------------------
+
+
+// Merge Data Functions (START) --------------------------------------------------
+// Merges the port and starboard temporary measurement cell maps into one
+// combined measurement map for the current ping.
+//
+// If both sonar sides land in the same discrete map cell, keep one merged cell.
+// For now:
+// - q_m is the same map location
+// - p_m keeps the strongest probability
+// - v_m keeps the strongest intensity value
+#[allow(non_snake_case)]
+fn _merge_cell_map_m(
+    cell_map_m_port: &CellMapM,
+    cell_map_m_stb: &CellMapM,
+) -> CellMapM {
+    let mut cell_map_m = CellMapM {
+        map_m: HashMap::with_capacity(
+            cell_map_m_port.map_m.len() + cell_map_m_stb.map_m.len()
+        ),
+    };
+
+    for (cell_coord_m, cell_data_m) in &cell_map_m_port.map_m {
+        cell_map_m.map_m.insert(
+            *cell_coord_m,
+            CellDataM {
+                q_m: QPixel {
+                    x: cell_data_m.q_m.x,
+                    y: cell_data_m.q_m.y,
+                },
+                v_m: cell_data_m.v_m,
+                p_m: cell_data_m.p_m,
+            },
+        );
+    }
+
+    for (cell_coord_m, cell_data_m) in &cell_map_m_stb.map_m {
+        cell_map_m
+            .map_m
+            .entry(*cell_coord_m)
+            .and_modify(|cell| {
+                cell.p_m = cell.p_m.max(cell_data_m.p_m);
+                cell.v_m = cell.v_m.max(cell_data_m.v_m);
+            })
+            .or_insert(
+                CellDataM {
+                    q_m: QPixel {
+                        x: cell_data_m.q_m.x,
+                        y: cell_data_m.q_m.y,
+                    },
+                    v_m: cell_data_m.v_m,
+                    p_m: cell_data_m.p_m,
+                },
+            );
+    }
+
+    return cell_map_m;
+}
+// Merge Data Functions (STOP) --------------------------------------------------
+
 
 
 
@@ -114,7 +593,40 @@ impl MapGenerator {
 
 
 // Chunk Management Functions (START) --------------------------------------------------
+// TODO: For nwo we wait with this
+#[allow(non_snake_case)]
+pub fn _chunk_manager_add(
+    Q_m: &Vec<QPixel>,
+) -> bool {
+    // TODO:
+    // loop through all q in Q_m
 
+    // TODO:
+    // for each q, convert world position -> discrete map cell using map_resolution
+
+    // TODO:
+    // from discrete map cell, compute which chunk the q belongs to using chunk_size
+
+    // TODO:
+    // from discrete map cell, compute local cell coordinate inside that chunk
+
+    // TODO:
+    // if chunk does not exist yet, allocate it
+
+    // TODO:
+    // set chunk age = 0 because this chunk was touched this round
+
+    // TODO:
+    // if cell does not exist yet inside chunk, allocate it
+
+    // TODO:
+    // store / update the q cell in that chunk cell location
+
+    // TODO:
+    // later this is where V/P update will also happen
+
+    return true;
+}
 // Chunk Management Functions (STOP) --------------------------------------------------
 
 
