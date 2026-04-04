@@ -84,7 +84,7 @@ impl MapGenerator {
         // Pruning stage ---------- 
         // Build and Prunes Q_m
         // In addition caches P_m for later use
-        let (cell_map_m_port, cell_map_m_stb) = _prune(
+        let (mut cell_map_m_port, mut cell_map_m_stb) = _prune(
             &pose,
             &geometric_correction,
             &self.sonar,
@@ -95,8 +95,16 @@ impl MapGenerator {
         );
 
         // Intensity Calculation ----------
-        // TODO V_m measured whatever map idk what to say interpolated swath to polar map idk what this V_m is called ======
-        // DO calculations here
+        // Intensity Calculation ----------
+        _calculate_V_m(
+            &mut cell_map_m_port,
+            &mut cell_map_m_stb,
+            &pose,
+            &geometric_correction,
+            &swath_processed,
+            &self.sonar,
+            self.map_resolution,
+        );
 
         // Merge Data ----------
         self.cell_map_m = _merge_cell_map_m(
@@ -613,7 +621,197 @@ fn _P_m(
 
 
 // Intensity Map Functions (START) --------------------------------------------------
+// TODO: Explain what the function does
+#[allow(non_snake_case)]
+fn _calculate_V_m(
+    cell_map_m_port: &mut CellMapM,
+    cell_map_m_stb: &mut CellMapM,
+    pose: &Pose3D,
+    geometric_correction: &GeometricCorrection,
+    swath_processed: &SwathProcessed,
+    sonar: &SonarParams,
+    map_resolution: f64,
+) {
+    _calculate_V_m_side(
+        cell_map_m_port,
+        pose,
+        geometric_correction.h_port,
+        &swath_processed.port,
+        swath_processed.samples_per_beam,
+        &sonar.transducer_port.offset,
+        sonar.transducer_port.max_range,
+        sonar.transducer_port.is_reversed,
+        map_resolution,
+    );
 
+    _calculate_V_m_side(
+        cell_map_m_stb,
+        pose,
+        geometric_correction.h_stb,
+        &swath_processed.starboard,
+        swath_processed.samples_per_beam,
+        &sonar.transducer_stb.offset,
+        sonar.transducer_stb.max_range,
+        sonar.transducer_stb.is_reversed,
+        map_resolution,
+    );
+}
+
+// TODO: Reexlain what the function does
+// Builds the temporary intensity map V_m for the current measurement m.
+//
+// Idea:
+// For each candidate map cell q_m that survived pruning, estimate its intensity
+// by projecting that cell back into sonar slant space and sampling the processed
+// swath image. Instead of using only the cell center, use the 4 cell corners,
+// interpolate each corner intensity in slant space, and average them to get
+// one representative intensity value for the cell.
+//
+// High-level steps:
+// 1. Loop through all surviving cells in cell_map_m.
+// 2. For each cell, compute its 4 map-space corner coordinates.
+// 3. For each corner, project that corner into the corresponding sonar slant range.
+// 4. Convert each projected slant range into neighboring sonar sample/bin indices.
+// 5. Interpolate between the lower/upper neighboring bins to estimate corner intensity.
+// 6. Average the 4 interpolated corner intensities to get V_m for that cell.
+// 7. Store the result back into the cell's v_m field.
+//
+// Notes:
+// - This should be done separately for port and starboard before final merge,
+//   because the projection into slant space depends on sonar side.
+// - The actual projection helper should decide whether a map cell belongs to
+//   the current sonar side and whether the projected slant range is valid.
+// - For now this is only a skeleton / TODO guide.
+#[allow(non_snake_case)]
+fn _calculate_V_m_side(
+    cell_map_m: &mut CellMapM,
+    pose: &Pose3D,
+    h_transducer: f64,
+    swath_processed_channel: &[u8],
+    swath_samples: u64,
+    transducer_offset: &Pose3D,
+    max_range: f64,
+    is_reversed: bool,
+    map_resolution: f64,
+) {
+    // Vehicle/body origin in world coordinates.
+    // Each beam point is rotated into world frame and then translated by this.
+    let pose_body_in_world = Vector2::new(
+        pose.position.x,
+        pose.position.y,
+    );
+
+    // Precompute vehicle yaw rotation in 2D once for this ping.
+    // Since Q_m is generated only in the horizontal ground plane, a 2D rotation
+    // is sufficient and avoids the overhead of full 3D rotation objects.
+    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows, not ideal :/
+    let R_body_to_world = Rotation2::new(pose.orientation.yaw - PI/2.0);
+    let R_world_to_body = R_body_to_world.transpose();
+
+    // Prep the half cell in advance so no extra calculations for optimized code
+    let half_cell = map_resolution/2.0;
+
+    for cell_data_m in cell_map_m.map_m.values_mut() {
+        // Get the world coordinate
+        let q_m = &cell_data_m.q_m;
+        let range_world_m = Vector2::new(
+            q_m.x,
+            q_m.y,
+        );
+
+        // Build the 4 cell corners in world/map frame first, then rotate them into body frame.
+        // This is the correct order because the map cell is axis-aligned in world space, not in body space.
+        let range_corners_world = [
+            Vector2::new(
+                range_world_m.x - half_cell,
+                range_world_m.y - half_cell,
+            ),
+            Vector2::new(
+                range_world_m.x + half_cell,
+                range_world_m.y - half_cell,
+            ),
+            Vector2::new(
+                range_world_m.x + half_cell,
+                range_world_m.y + half_cell,
+            ),
+            Vector2::new(
+                range_world_m.x - half_cell,
+                range_world_m.y + half_cell,
+            ),
+        ];
+
+        let mut range_corners_body = [Vector2::zeros(); 4];
+        for i in 0..4 {
+            range_corners_body[i] =
+                R_world_to_body * (range_corners_world[i] - pose_body_in_world);
+        }
+
+        // Compute slant range
+        // Precompute body -> sonar transform
+        let R_body_to_sonar = Rotation2::new(transducer_offset.orientation.yaw);
+        let t_body_to_sonar = Vector2::new(
+            transducer_offset.position.x,
+            transducer_offset.position.y,
+        );
+
+        let mut slant_ranges = [0.0; 4];
+        for i in 0..4 {
+            // body -> sonar frame
+            let corner_sonar = R_body_to_sonar * (range_corners_body[i] - t_body_to_sonar);
+
+            // horizontal distance in sonar frame
+            let ground_range = (corner_sonar.x * corner_sonar.x + corner_sonar.y * corner_sonar.y).sqrt();
+
+            // slant range using height
+            slant_ranges[i] = (ground_range * ground_range + h_transducer * h_transducer).sqrt();
+        }
+
+        // Compute intensities
+        let slant_resolution = max_range/swath_samples as f64;
+
+        let mut intensities = [0.0; 4];
+
+        for i in 0..4 {
+            // Get the bin indexes for upper and lower bin
+            let bin_f = slant_ranges[i]/slant_resolution;
+
+            let bin_low = bin_f.floor() as usize;
+            let bin_high = bin_low + 1;
+
+            // Calculate the weight for interpolation
+            let w = bin_f - bin_low as f64;
+
+            // Calculate index order depending on inversion
+            let idx_low = if is_reversed {
+                (swath_samples as usize - 1).saturating_sub(bin_low)
+            } else {
+                bin_low
+            };
+
+            let idx_high = if is_reversed {
+                (swath_samples as usize - 1).saturating_sub(bin_high)
+            } else {
+                bin_high
+            };
+
+            // Safety clamp so no indexes are out of bound
+            let idx_low = idx_low.min(swath_samples as usize - 1);
+            let idx_high = idx_high.min(swath_samples as usize - 1);
+
+            // Extract intensities
+            let v0 = swath_processed_channel[idx_low] as f64;
+            let v1 = swath_processed_channel[idx_high] as f64;
+
+            intensities[i] = (1.0 - w) * v0 + w * v1;
+        }
+
+        // average the 4 corner intensities to get one V_m value for this cell
+        let V_m = intensities.iter().sum::<f64>()/4.0;
+
+        // write the averaged value into cell_data_m.v_m
+        cell_data_m.v_m = V_m
+    }
+}
 // Intensity Map Functions (STOP) --------------------------------------------------
 
 

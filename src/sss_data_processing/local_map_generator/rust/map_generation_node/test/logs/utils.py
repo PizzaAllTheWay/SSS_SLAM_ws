@@ -112,6 +112,7 @@ def plot_cell_map_m_and_swath_interactive(
     zero_color="white",
     cmap_name="copper",
     p_m_cmap_name="viridis",
+    v_m_cmap_name="copper",
 ):
     pose_path_color = "gray"
     q_m_color = "blue"
@@ -190,18 +191,15 @@ def plot_cell_map_m_and_swath_interactive(
 
     if left_mode == "q_m":
         scatter = axes[0].scatter(
-            qx,
-            qy,
+            qx, qy,
             s=6,
             color=q_m_color,
             label=f"Q_m (n={len(qx)})",
         )
         left_title = f"Q_m at t={t_rel:.6f}"
-
     elif left_mode == "p_m":
         scatter = axes[0].scatter(
-            qx,
-            qy,
+            qx, qy,
             s=10,
             c=pm if len(pm) > 0 else np.array([]),
             cmap=p_m_cmap_name,
@@ -210,9 +208,19 @@ def plot_cell_map_m_and_swath_interactive(
         colorbar = fig.colorbar(scatter, ax=axes[0])
         colorbar.set_label("P_m")
         left_title = f"P_m at t={t_rel:.6f}"
-
+    elif left_mode == "v_m":
+        scatter = axes[0].scatter(
+            qx, qy,
+            s=10,
+            c=vm if len(vm) > 0 else np.array([]),
+            cmap=v_m_cmap_name,
+            label=f"V_m (n={len(qx)})",
+        )
+        colorbar = fig.colorbar(scatter, ax=axes[0])
+        colorbar.set_label("V_m")
+        left_title = f"V_m at t={t_rel:.6f}"
     else:
-        raise ValueError("left_mode must be 'q_m' or 'p_m'")
+        raise ValueError("left_mode must be 'q_m', 'p_m', or 'v_m'")
 
     pose_scatter = axes[0].scatter(
         [pose_x],
@@ -290,6 +298,12 @@ def plot_cell_map_m_and_swath_interactive(
                 scatter.set_clim(vmin=float(pm.min()), vmax=float(pm.max()))
             else:
                 scatter.set_array(np.array([]))
+        elif left_mode == "v_m":
+            if len(vm) > 0:
+                scatter.set_array(vm)
+                scatter.set_clim(vmin=float(vm.min()), vmax=float(vm.max()))
+            else:
+                scatter.set_array(np.array([]))
 
         pose_scatter.set_offsets(np.array([[pose_x, pose_y]]))
 
@@ -312,9 +326,12 @@ def plot_cell_map_m_and_swath_interactive(
         if left_mode == "q_m":
             scatter.set_label(f"Q_m (n={len(qx)})")
             axes[0].set_title(f"Q_m at t={t_rel:.6f}")
-        else:
+        elif left_mode == "p_m":
             scatter.set_label(f"P_m (n={len(qx)})")
             axes[0].set_title(f"P_m at t={t_rel:.6f}")
+        else:
+            scatter.set_label(f"V_m (n={len(qx)})")
+            axes[0].set_title(f"V_m at t={t_rel:.6f}")
 
         axes[0].legend()
         fig.canvas.draw_idle()
@@ -351,5 +368,19 @@ def plot_pm_and_swath_interactive(
         pose_df=pose_df,
         swath_df=swath_df,
         left_mode="p_m",
+        title=title,
+    )
+
+def plot_vm_and_swath_interactive(
+    cell_map_m_df,
+    pose_df,
+    swath_df,
+    title="V_m and Processed Swath",
+):
+    plot_cell_map_m_and_swath_interactive(
+        cell_map_m_df=cell_map_m_df,
+        pose_df=pose_df,
+        swath_df=swath_df,
+        left_mode="v_m",
         title=title,
     )
