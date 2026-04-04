@@ -11,10 +11,6 @@ use statrs::distribution::{
     ContinuousCDF, 
     Normal,
 };
-use kiddo::{
-    KdTree,
-    SquaredEuclidean
-};
 
 use super::types::*;
 
@@ -661,6 +657,7 @@ fn _calculate_V_m(
         &sonar.transducer_port.offset,
         sonar.transducer_port.max_range,
         sonar.transducer_port.is_reversed,
+        sonar.transducer_port.blind_zone_scale,
         map_resolution,
     );
 
@@ -673,6 +670,7 @@ fn _calculate_V_m(
         &sonar.transducer_stb.offset,
         sonar.transducer_stb.max_range,
         sonar.transducer_stb.is_reversed,
+        sonar.transducer_stb.blind_zone_scale,
         map_resolution,
     );
 }
@@ -712,6 +710,7 @@ fn _calculate_V_m_side(
     transducer_offset: &Pose3D,
     max_range: f64,
     is_reversed: bool,
+    blind_zone_scale: f64,
     map_resolution: f64,
 ) {
     // Vehicle/body origin in world coordinates.
@@ -787,7 +786,9 @@ fn _calculate_V_m_side(
         }
 
         // Compute intensities
-        let slant_resolution = max_range/swath_samples as f64;
+        // ! DEBUGGING !
+        // ! EXPLAIN WHY WE NEED THE Blind zoen thing here blablabla...... same reasoning as in swath processing
+        let slant_resolution = (1.0/blind_zone_scale) * (max_range/swath_samples as f64);
 
         let mut intensities = [0.0; 4];
 
