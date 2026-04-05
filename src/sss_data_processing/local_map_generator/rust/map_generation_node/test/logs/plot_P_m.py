@@ -1,5 +1,5 @@
-# plot_qm.py
 import os
+import numpy as np
 from utils import (
     get_newest_file,
     load_csv,
@@ -20,6 +20,9 @@ if __name__ == "__main__":
     # Test samples
     # START_T = 1756381086.0
     # END_T = 1756381250.0
+
+    # ! YAW OFFSET
+    YAW_OFFSET = -np.pi/2.0
 
     cell_map_m_df = load_csv(
         get_newest_file(DATA_DIR, "cell_map_m"),
@@ -44,5 +47,6 @@ if __name__ == "__main__":
         pose_df,
         swath_df,
         title="P_m and Processed Swath",
+        yaw_offset=YAW_OFFSET,
     )
 

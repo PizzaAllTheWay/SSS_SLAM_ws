@@ -1,7 +1,12 @@
-use std::f64::consts::PI;
-use std::collections::{
-    HashMap,
+// ? NOTE: Use FxHashMap here instead of the default std HashMap because this code is
+// ? performance-critical and does a very large number of hashmap operations on internal,
+// ? non-hostile numeric keys. FxHashMap uses a faster non-cryptographic hasher, which
+// ? reduces hashing overhead and improves runtime in hot paths like map/chunk/cell access.
+use rustc_hash::{
+    FxHashMap,
 };
+
+use std::f64::consts::PI;
 use nalgebra::{
     Vector2,
     Matrix2,
@@ -18,28 +23,37 @@ use super::types::*;
 
 #[allow(non_snake_case)]
 pub struct MapGenerator {
-    // TODO: Explain each data briefly here like 1-2 sentences max and what its used for.
-
+    // Fixed sonar configuration used throughout pruning, projection, and intensity lookup.
     sonar: SonarParams,
 
+    // Temporary measurement cell map for the current swath after port/stb merge.
     cell_map_m: CellMapM,
 
+    // Dense map resolution in meters per pixel.
     map_resolution: f64,
-    chunk_size: i64,
-    chunk_max_age: u32,
+
+    // Persistent sparse chunked map storing accumulated probabilistic map data over time.
     chunk_map: ChunkMap,
 
+    // Fast early pruning threshold using the cheap beam approximation.
     beam_weight_threshold: f64,
+    // Main probabilistic pruning threshold using the more exact beam model.
     probabilistic_map_threshold: f64,
 
+    // Precomputed 2D rotation lookup table used to speed up beam-angle rotations.
     rotation2_lookup_table: Rotation2LookupTable,
 
+    // Minimum number of valid neighboring pixels required before filling an empty pixel.
     fill_inn_min_neighbors: u8,
+    // Maximum number of iterative local fill rounds used for small gap filling.
     fill_inn_passes: u8,
+
+    // ? NOTE: `map_offset_yaw` is currently applied as a fixed alignment correction
+    // ? between the pose yaw convention and the map/sonar ground-plane convention.
+    // ? This works for the current setup, but ideally the underlying frame definition
+    // ? should be made fully consistent so this extra offset is no longer needed.
+    map_offset_yaw: f64,
 }
-
-
-
 impl MapGenerator {
     pub fn new(
         sonar: SonarParams,
@@ -50,6 +64,7 @@ impl MapGenerator {
         probabilistic_map_threshold: f64,
         fill_inn_min_neighbors: u8,
         fill_inn_passes: u8,
+        map_offset_yaw: f64,
     ) -> Self {
         // Use the largest sonar range across both transducers when building the rotation lookup-table.
         // This guarantees that the lookup-table angular resolution is good enough for 
@@ -59,15 +74,16 @@ impl MapGenerator {
         let max_range_max = max_range_port.max(max_range_stb);
 
         Self {
-            // TODO Add stuff here, no need to explain a lot here
             sonar,
 
             cell_map_m: CellMapM::new(),
 
             map_resolution,
-            chunk_size,
-            chunk_max_age,
-            chunk_map: ChunkMap::new(),
+
+            chunk_map: ChunkMap::new(
+                chunk_size,
+                chunk_max_age
+            ),
 
             beam_weight_threshold,
             probabilistic_map_threshold,
@@ -82,16 +98,22 @@ impl MapGenerator {
 
             fill_inn_min_neighbors,
             fill_inn_passes,
+
+            map_offset_yaw,
         }
     }
 
+    // Buffers one processed swath into the probabilistic map state.
+    // The function prunes candidate map cells, estimates their measurement intensity,
+    // merges port and starboard results, and then inserts the final measurement cells
+    // into the persistent chunk map representation.
     #[allow(non_snake_case)]
     pub fn buffer_processed_swath_into_map(
         &mut self,
         pose: &Pose3D,
         geometric_correction: GeometricCorrection,
         swath_processed: SwathProcessed,
-    ) -> bool {
+    ) {
         // Pruning stage ---------- 
         // Build and Prunes Q_m
         // In addition caches P_m for later use
@@ -103,6 +125,7 @@ impl MapGenerator {
             self.beam_weight_threshold,
             self.probabilistic_map_threshold,
             &self.rotation2_lookup_table,
+            self.map_offset_yaw,
         );
 
         // Intensity Calculation ----------
@@ -114,6 +137,7 @@ impl MapGenerator {
             &swath_processed,
             &self.sonar,
             self.map_resolution,
+            self.map_offset_yaw,
         );
 
         // Merge Data ----------
@@ -128,32 +152,30 @@ impl MapGenerator {
         _chunk_manager_add(
             &self.cell_map_m,
             &mut self.chunk_map,
-            self.chunk_size,
         );
-
-        return true;
     }
 
+    // Builds the current dense map from the persistent chunk map state.
+    // Old chunks are pruned first, then the sparse chunk data is converted into a
+    // dense normalized map image, small local gaps are filled, and finally the
+    // remaining active chunks are aged for future chunk management.
     pub fn calculate_map(
         &mut self,
         pose: &Pose3D,
     ) -> Map {
         // Map generation ----------
-        _chunk_manager_prune(
-            &mut self.chunk_map,
-            self.chunk_max_age,
-        );
+        _chunk_manager_prune(&mut self.chunk_map);
 
         #[allow(non_snake_case)]
         let mut M = _calculate_M(
             pose,
-            &mut self.chunk_map,
+            &self.chunk_map,
             self.map_resolution,
-            self.chunk_size,
         );
 
         _fill_small_gaps(
             &mut M,
+            &self.chunk_map,
             self.fill_inn_min_neighbors,
             self.fill_inn_passes,
         );
@@ -199,11 +221,9 @@ impl MapGenerator {
 // itself, only how efficiently the rotations are evaluated.
 pub struct Rotation2LookupTable {
     angle_min: f64,
-    angle_max: f64,
-    angle_step: f64,
+    inv_angle_step: f64,
     rotations: Vec<Matrix2<f64>>,
 }
-
 #[allow(non_snake_case)]
 impl Rotation2LookupTable {
     // Builds a lookup table of 2D rotation matrices over a fixed angle range.
@@ -223,6 +243,7 @@ impl Rotation2LookupTable {
         let angle_lookup_refinement_factor = 0.1;
 
         let angle_step = angle_lookup_refinement_factor * map_resolution/max_range.max(map_resolution);
+        let inv_angle_step = 1.0/angle_step;
 
         let mut rotations = Vec::new();
 
@@ -242,23 +263,23 @@ impl Rotation2LookupTable {
 
         Self {
             angle_min,
-            angle_max,
-            angle_step,
+            inv_angle_step,
             rotations,
         }
     }
 
     // Returns the precomputed rotation matrix closest to the requested angle.
-    pub fn R(
-        &self,
-        angle: f64,
-    ) -> &Matrix2<f64> {
-        let clamped_angle = angle.clamp(self.angle_min, self.angle_max);
-
-        let idx = ((clamped_angle - self.angle_min) / self.angle_step).round() as usize;
-        let idx = idx.min(self.rotations.len().saturating_sub(1));
-
-        &self.rotations[idx]
+    // ? NOTE:
+    // ? PERFORMANCE CRITICAL:
+    // ? This function assumes `angle` is always in [angle_min, angle_max].
+    // ? No clamp or bounds checks are done here.
+    // ? If that contract is violated, behavior is invalid.
+    // ? However this should never be violated as it is internal function for a very specific optiization case
+    // ? In that specific case we already have angle under control and is already bounded where 
+    #[inline(always)]
+    pub fn R(&self, angle: f64) -> &Matrix2<f64> {
+        let idx = ((angle - self.angle_min) * self.inv_angle_step + 0.5) as usize;
+        unsafe { self.rotations.get_unchecked(idx) }
     }
 }
 // Look Up Tables (STOP) --------------------------------------------------
@@ -287,6 +308,7 @@ fn _prune(
     beam_weight_threshold: f64,
     probabilistic_map_threshold: f64,
     rotation2_lookup_table: &Rotation2LookupTable,
+    map_offset_yaw: f64,
 ) -> (CellMapM, CellMapM) {
     let cell_map_m_port = _prune_side(
         pose,
@@ -299,6 +321,7 @@ fn _prune(
         beam_weight_threshold,
         probabilistic_map_threshold,
         rotation2_lookup_table,
+        map_offset_yaw,
     );
 
     let cell_map_m_stb = _prune_side(
@@ -312,6 +335,7 @@ fn _prune(
         beam_weight_threshold,
         probabilistic_map_threshold,
         rotation2_lookup_table,
+        map_offset_yaw,
     );
 
     return (cell_map_m_port, cell_map_m_stb);
@@ -341,6 +365,7 @@ fn _prune_side(
     beam_weight_threshold: f64,
     probabilistic_map_threshold: f64,
     rotation2_lookup_table: &Rotation2LookupTable,
+    map_offset_yaw: f64,
 ) -> CellMapM {
     // Store discrete map cells together with their data.
     // Key = discrete map index
@@ -350,6 +375,7 @@ fn _prune_side(
     // The sonar beam spans sideways around its centerline.
     // We therefore sweep from -theta/2 to +theta/2 around the side-looking direction.
     let half_theta = theta/2.0;
+    let half_theta_inv = 1.0/half_theta; // Purely for optimization so we don't have to divide each time we want inverse value
 
     // Determine whether this transducer points to positive body-y or negative body-y.
     // Port and starboard are therefore handled with the same logic, only sign changes.
@@ -362,8 +388,11 @@ fn _prune_side(
     // Precompute vehicle yaw rotation in 2D once for this ping.
     // Since Q_m is generated only in the horizontal ground plane, a 2D rotation
     // is sufficient and avoids the overhead of full 3D rotation objects.
-    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows, not ideal :/
-    let R_body_to_world = Rotation2::new(pose.orientation.yaw - PI/2.0);
+    // ? NOTE: `map_offset_yaw` is currently applied as a fixed alignment correction
+    // ? between the pose yaw convention and the map/sonar ground-plane convention.
+    // ? This works for the current setup, but ideally the underlying frame definition
+    // ? should be made fully consistent so this extra offset is no longer needed.
+    let R_body_to_world = Rotation2::new(pose.orientation.yaw + map_offset_yaw);
 
     // Vehicle/body origin in world coordinates.
     // Each beam point is rotated into world frame and then translated by this.
@@ -415,12 +444,12 @@ fn _prune_side(
             // Compute a fast approximate beam weight for this sampled point.
             // If the point lies too far toward the beam edge, skip it immediately
             // before doing more expensive work.
-            let p_theta_weight = _p_theta_approximation(
+            let P_m_approximation = _P_m_approximation(
                 local_beam_angle,
-                half_theta,
+                half_theta_inv,
             );
 
-            if p_theta_weight < beam_weight_threshold {
+            if P_m_approximation < beam_weight_threshold {
                 // Angular step:
                 // use a range-dependent step so the arc is sampled roughly at map resolution.
                 // This avoids huge oversampling near r_min and undersampling near r_max.
@@ -517,75 +546,40 @@ fn _discretize_to_q(
 
 
 
-// Probabilistic Map Functions (START) --------------------------------------------------
-// Returns an approximate measurement probability for the current sampled point
-// inside the sonar beam.
+// Probabilistic Map Functions (START) -------------------------------------------------
+// Returns a very fast approximate measurement probability P_m for the current
+// sampled point inside the sonar beam.
 //
-// This is NOT the full probabilistic map-cell model yet.
-// The true P_m(q) should be computed as the integral of p(theta) over the
-// angular extent of the map cell q:
-//
-//     P_m(q) = ∫ p(theta) dtheta
-//
-// However, doing that full integral for every sampled point/cell during pruning stage would be too expensive.
-//
-// So for now, we use a fast pointwise approximation:
-// - treat the current sampled point as if it represents the cell
-// - evaluate the beam-density at its local beam angle
-// - use that value as an approximate P_m(q)
-//
-// This is good enough for aggressive early pruning.
-#[allow(non_snake_case)]
-fn _P_m_approximation(
-    local_beam_angle: f64,
-    beam_angle_horizontal_half: f64,
-) -> f64 {
-    return _p_theta_approximation(
-        local_beam_angle,
-        beam_angle_horizontal_half,
-    );
-}
-
-// Returns a fast approximate angular beam-weight p_theta for a given local beam angle.
-//
-// Why this approximation is used:
-// The original Gaussian beam model uses an exponential, which is too expensive
-// when evaluated millions of times during pruning. Since this stage only needs
-// a cheap center-vs-edge weighting for early rejection, we replace the full
-// Gaussian with a much faster polynomial approximation.
+// This is used only for early pruning, where speed matters more than physical accuracy.
+// Instead of evaluating the full probabilistic beam model, this function uses a cheap
+// polynomial approximation that is strongest at the beam center, smoothly decreases
+// toward the beam edges, and becomes zero outside the beam.
 //
 // Method:
 // 1. Normalize the local beam angle by the half horizontal beam width.
-// 2. This gives a dimensionless value u where:
-//      u = 0   -> beam center
-//      |u| = 1 -> beam edge
-// 3. Use the squared normalized angle to build a simple center-heavy weight.
+// 2. Square the normalized value to avoid calling `abs()`.
+// 3. Use the simple center-heavy approximation:
 //
-// The approximation used is:
-//     p_theta_approx = (1 - u^2)^2,   for |u| < 1
-//     p_theta_approx = 0,             otherwise
+//     P_m_approx = (1 - u^2)^2,   for u^2 < 1
+//     P_m_approx = 0,             otherwise
 //
-// This keeps the same general behavior we want for pruning:
-// - strongest at the beam center
-// - smoothly decreasing toward the edges
-// - zero outside the beam
-//
-// It is NOT a physically exact beam-density model.
-// It is only a fast approximation for aggressive early pruning.
-fn _p_theta_approximation(
-    theta: f64,
-    alpha_h_half: f64,
+// This is not the final physical probability model.
+// It is only a fast approximation used to reject unlikely samples early.
+#[allow(non_snake_case)]
+#[inline(always)]
+fn _P_m_approximation(
+    local_beam_angle: f64,
+    beam_angle_horizontal_half_inv: f64,
 ) -> f64 {
-    let u = (theta / alpha_h_half).abs();
+    let u = local_beam_angle * beam_angle_horizontal_half_inv;
+    let u2 = u * u;
 
-    if u >= 1.0 {
+    if u2 >= 1.0 {
         return 0.0;
     }
 
-    let v = 1.0 - u * u;
-    let p_theta_approx = v * v;
-
-    return p_theta_approx;
+    let v = 1.0 - u2;
+    v * v
 }
 
 // Returns the integrated measurement probability P_m(q) for the current sampled point.
@@ -644,7 +638,9 @@ fn _P_m(
 
 
 // Intensity Map Functions (START) --------------------------------------------------
-// TODO: Explain what the function does
+// Computes the measurement intensity V_m for all surviving candidate cells.
+// It does this separately for the port and starboard channels, because each
+// side has its own transducer geometry, usable range, and processed swath data.
 #[allow(non_snake_case)]
 fn _calculate_V_m(
     cell_map_m_port: &mut CellMapM,
@@ -654,6 +650,7 @@ fn _calculate_V_m(
     swath_processed: &SwathProcessed,
     sonar: &SonarParams,
     map_resolution: f64,
+    map_offset_yaw: f64,
 ) {
     _calculate_V_m_side(
         cell_map_m_port,
@@ -666,6 +663,7 @@ fn _calculate_V_m(
         sonar.transducer_port.is_reversed,
         sonar.transducer_port.blind_zone_scale,
         map_resolution,
+        map_offset_yaw,
     );
 
     _calculate_V_m_side(
@@ -679,34 +677,20 @@ fn _calculate_V_m(
         sonar.transducer_stb.is_reversed,
         sonar.transducer_stb.blind_zone_scale,
         map_resolution,
+        map_offset_yaw,
     );
 }
 
-// TODO: Reexlain what the function does
-// Builds the temporary intensity map V_m for the current measurement m.
+// Estimates the measurement intensity V_m for each surviving candidate cell on one sonar side.
 //
-// Idea:
-// For each candidate map cell q_m that survived pruning, estimate its intensity
-// by projecting that cell back into sonar slant space and sampling the processed
-// swath image. Instead of using only the cell center, use the 4 cell corners,
-// interpolate each corner intensity in slant space, and average them to get
-// one representative intensity value for the cell.
+// For every candidate map cell, the function projects the cell footprint back into
+// sonar slant-range space and samples the processed swath intensity there.
+// Instead of using only the cell center, it uses all 4 cell corners, interpolates
+// the corresponding sonar intensities, and averages them to get one representative
+// intensity value for that map cell.
 //
-// High-level steps:
-// 1. Loop through all surviving cells in cell_map_m.
-// 2. For each cell, compute its 4 map-space corner coordinates.
-// 3. For each corner, project that corner into the corresponding sonar slant range.
-// 4. Convert each projected slant range into neighboring sonar sample/bin indices.
-// 5. Interpolate between the lower/upper neighboring bins to estimate corner intensity.
-// 6. Average the 4 interpolated corner intensities to get V_m for that cell.
-// 7. Store the result back into the cell's v_m field.
-//
-// Notes:
-// - This should be done separately for port and starboard before final merge,
-//   because the projection into slant space depends on sonar side.
-// - The actual projection helper should decide whether a map cell belongs to
-//   the current sonar side and whether the projected slant range is valid.
-// - For now this is only a skeleton / TODO guide.
+// This is done separately for port and starboard, because the projection depends on
+// the transducer mounting, usable slant-range geometry, and channel storage direction.
 #[allow(non_snake_case)]
 fn _calculate_V_m_side(
     cell_map_m: &mut CellMapM,
@@ -719,6 +703,7 @@ fn _calculate_V_m_side(
     is_reversed: bool,
     blind_zone_scale: f64,
     map_resolution: f64,
+    map_offset_yaw: f64,
 ) {
     // Vehicle/body origin in world coordinates.
     // Each beam point is rotated into world frame and then translated by this.
@@ -730,8 +715,11 @@ fn _calculate_V_m_side(
     // Precompute vehicle yaw rotation in 2D once for this ping.
     // Since Q_m is generated only in the horizontal ground plane, a 2D rotation
     // is sufficient and avoids the overhead of full 3D rotation objects.
-    // ? NOTE: Had to offset by PI/2 because the Yaw angle mounting is weird, might have to redo this a bit or look into it later if time allows, not ideal :/
-    let R_body_to_world = Rotation2::new(pose.orientation.yaw - PI/2.0);
+    // ? NOTE: `map_offset_yaw` is currently applied as a fixed alignment correction
+    // ? between the pose yaw convention and the map/sonar ground-plane convention.
+    // ? This works for the current setup, but ideally the underlying frame definition
+    // ? should be made fully consistent so this extra offset is no longer needed.
+    let R_body_to_world = Rotation2::new(pose.orientation.yaw + map_offset_yaw);
     let R_world_to_body = R_body_to_world.transpose();
 
     // Prep the half cell in advance so no extra calculations for optimized code
@@ -768,8 +756,7 @@ fn _calculate_V_m_side(
 
         let mut range_corners_body = [Vector2::zeros(); 4];
         for i in 0..4 {
-            range_corners_body[i] =
-                R_world_to_body * (range_corners_world[i] - pose_body_in_world);
+            range_corners_body[i] = R_world_to_body * (range_corners_world[i] - pose_body_in_world);
         }
 
         // Compute slant range
@@ -792,10 +779,18 @@ fn _calculate_V_m_side(
             slant_ranges[i] = (ground_range * ground_range + h_transducer * h_transducer).sqrt();
         }
 
-        // Compute intensities
-        // ! DEBUGGING !
-        // ! EXPLAIN WHY WE NEED THE Blind zoen thing here blablabla...... same reasoning as in swath processing
-        let slant_resolution = (1.0/blind_zone_scale) * (max_range/swath_samples as f64);
+        // Compute the effective slant-range resolution used when projecting map cells
+        // back into sonar sample space.
+        //
+        // ? NOTE:
+        // ? The blind-zone scale is included here for the same practical reason as in the
+        // ? swath-processing stage: the purely geometric first-bottom-return/slant-range
+        // ? mapping tends to place the near-nadir boundary slightly too far out in real data.
+        // ? Applying the same empirical blind-zone correction here keeps the map-to-swath
+        // ? intensity lookup aligned with the corrected usable sonar region, so projected
+        // ? cell intensities are sampled from the same effective slant-space geometry as
+        // ? the processed swath data.
+        let slant_resolution = (1.0 / blind_zone_scale) * (max_range/swath_samples as f64);
 
         let mut intensities = [0.0; 4];
 
@@ -859,8 +854,9 @@ fn _merge_cell_map_m(
     cell_map_m_stb: &CellMapM,
 ) -> CellMapM {
     let mut cell_map_m = CellMapM {
-        map_m: HashMap::with_capacity(
-            cell_map_m_port.map_m.len() + cell_map_m_stb.map_m.len()
+        map_m: FxHashMap::with_capacity_and_hasher(
+            cell_map_m_port.map_m.len() + cell_map_m_stb.map_m.len(),
+            Default::default(),
         ),
     };
 
@@ -905,54 +901,47 @@ fn _merge_cell_map_m(
 
 
 // Normalized Map Functions (START) --------------------------------------------------
-// TODO: Rewrite a bit with Pose in mind as well
-// Builds the dense final map image M from the sparse chunk map.
+// Builds the dense normalized map image M from the current sparse chunk map.
 //
-// The output is a dense 2D pixel grid of type u8 where each pixel is computed as:
+// The sparse chunk map stores only cells that actually contain accumulated data.
+// This function converts that sparse representation into a dense 2D image by
+// first determining the global map bounds, allocating the required dense map,
+// and then writing each valid sparse cell into its corresponding dense pixel.
+//
+// Each valid pixel is computed from the normalized map value
 //
 //     M = V / P
 //
-// for cells that exist in the chunk map and have nonzero probability.
-// Missing chunks / missing cells / zero-probability cells are written as 0.
-//
-// Output layout:
-// - M[row][col]
-// - row corresponds to y
-// - col corresponds to x
+// while missing cells remain zero. The current vehicle pose is also converted
+// into map cell coordinates so it can be stored consistently inside the map frame.
 #[allow(non_snake_case)]
 pub fn _calculate_M(
     pose: &Pose3D,
     chunk_map: &ChunkMap,
     map_resolution: f64,
-    chunk_size: i64,
 ) -> Map {
     if chunk_map.chunks.is_empty() {
         return Map::new(
-            Pose2DMap { 
+            Pose2DMap {
                 x: 0,
                 y: 0,
-                yaw: pose.orientation.yaw
+                yaw: pose.orientation.yaw,
             },
+            map_resolution,
             0,
             0,
         );
     }
 
-    // Global chunk bounds
-    let min_chunk_x = chunk_map.chunks.keys().map(|c| c.x).min().unwrap();
-    let max_chunk_x = chunk_map.chunks.keys().map(|c| c.x).max().unwrap();
-    let min_chunk_y = chunk_map.chunks.keys().map(|c| c.y).min().unwrap();
-    let max_chunk_y = chunk_map.chunks.keys().map(|c| c.y).max().unwrap();
-
-    // Convert chunk bounds to global cell bounds
-    let min_cell_x = min_chunk_x * chunk_size;
-    let max_cell_x = (max_chunk_x + 1) * chunk_size;
-    let min_cell_y = min_chunk_y * chunk_size;
-    let max_cell_y = (max_chunk_y + 1) * chunk_size;
+    // Convert the sparse chunk map bounds into global cell-space bounds.
+    // These bounds define the dense map rectangle that will be allocated and filled.
+    let (min_cell_x, max_cell_x, min_cell_y, max_cell_y) = _map_cell_bounds(chunk_map);
 
     let width = (max_cell_x - min_cell_x) as usize;
     let height = (max_cell_y - min_cell_y) as usize;
 
+    // Convert the vehicle pose from metric world coordinates into global cell coordinates,
+    // so the pose can be placed correctly inside the dense map frame.
     let pose_global_x = (pose.position.x/map_resolution).round() as i64;
     let pose_global_y = (pose.position.y/map_resolution).round() as i64;
 
@@ -962,91 +951,238 @@ pub fn _calculate_M(
         yaw: pose.orientation.yaw,
     };
 
-    let mut M = Map::new(pose_map, width, height);
+    let mut M = Map::new(
+        pose_map,
+        map_resolution,
+        width,
+        height,
+    );
 
-    for row in 0..height {
-        for col in 0..width {
-            let global_x = min_cell_x + col as i64;
-            let global_y = min_cell_y + row as i64;
+    // Sparse traversal:
+    // iterate only chunks/cells that actually exist, then write into dense map
+    for (chunk_coord, chunk) in &chunk_map.chunks {
+        let chunk_base_x = chunk_coord.x * chunk_map.chunk_size;
+        let chunk_base_y = chunk_coord.y * chunk_map.chunk_size;
 
-            let chunk_coord = ChunkCoord {
-                x: global_x.div_euclid(chunk_size),
-                y: global_y.div_euclid(chunk_size),
-            };
+        for (local_cell_coord, cell) in &chunk.data {
+            if cell.p <= 0.0 {
+                continue;
+            }
 
-            let local_cell_coord = CellCoord {
-                x: global_x.rem_euclid(chunk_size),
-                y: global_y.rem_euclid(chunk_size),
-            };
+            let global_x = chunk_base_x + local_cell_coord.x;
+            let global_y = chunk_base_y + local_cell_coord.y;
 
-            let value = if let Some(chunk) = chunk_map.chunks.get(&chunk_coord) {
-                if let Some(cell) = chunk.data.get(&local_cell_coord) {
-                    if cell.p > 0.0 {
-                        let m = cell.v/cell.p;
-                        m.clamp(0.0, 255.0) as u8
-                    } else {
-                        0 // Probability is ill defined, set value to 0 for this pixel
-                    }
-                } else {
-                    0 // Cell didn't exist, set value to 0 for this pixel
-                }
-            } else {
-                0 // Chunk didn't exist, set value to 0 for this pixel
-            };
+            let col = (global_x - min_cell_x) as usize;
+            let row = (global_y - min_cell_y) as usize;
 
-            M.set(col, row, value);
+            let m = (cell.v/cell.p).clamp(0.0, 255.0) as u8;
+            M.set(col, row, m);
         }
     }
 
-    M
+    return M;
+}
+
+// Returns the global dense-map cell bounds covered by the current sparse chunk map.
+//
+// The chunk map stores data in chunk coordinates, while later map generation
+// and fill-in steps often need the corresponding bounds in global cell coordinates.
+// This helper converts the minimum and maximum active chunk coordinates into the
+// equivalent global cell-space rectangle:
+//
+//   min_cell_x .. max_cell_x
+//   min_cell_y .. max_cell_y
+//
+// where the max bounds are exclusive, matching the usual width/height convention.
+#[inline]
+fn _map_cell_bounds(chunk_map: &ChunkMap) -> (i64, i64, i64, i64) {
+    let min_chunk_x = chunk_map.chunks.keys().map(|c| c.x).min().unwrap();
+    let max_chunk_x = chunk_map.chunks.keys().map(|c| c.x).max().unwrap();
+    let min_chunk_y = chunk_map.chunks.keys().map(|c| c.y).min().unwrap();
+    let max_chunk_y = chunk_map.chunks.keys().map(|c| c.y).max().unwrap();
+
+    let min_cell_x = min_chunk_x * chunk_map.chunk_size;
+    let max_cell_x = (max_chunk_x + 1) * chunk_map.chunk_size;
+    let min_cell_y = min_chunk_y * chunk_map.chunk_size;
+    let max_cell_y = (max_chunk_y + 1) * chunk_map.chunk_size;
+
+    (min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 }
 // Normalized Map Functions (STOP) --------------------------------------------------
 
 
 
 // Fill Inn Functions (START) --------------------------------------------------
-// TODO: Explain this algorithm well
+// Fills small gaps in the dense map by iteratively checking only empty pixels
+// inside active chunk regions from the sparse chunk map.
+//
+// The algorithm first builds a compact list of empty candidate cells from the
+// chunk footprints, instead of scanning the full dense map each round.
+// It then runs several fill passes, where each pass reads from a frozen copy
+// of the current map and fills only those candidates that have enough valid
+// neighboring pixels in their local 3x3 neighborhood.
+//
+// Cells that get filled are removed from future work, while unresolved cells
+// are kept for later passes. This makes the workload shrink over time and keeps
+// the method much faster than repeatedly scanning the full map.
 #[allow(non_snake_case)]
-fn _fill_small_gaps(M: &mut Map, min_neighbors: u8, passes: u8) {
-    if M.width == 0 || M.height == 0 {
+fn _fill_small_gaps(
+    M: &mut Map,
+    chunk_map: &ChunkMap,
+    min_neighbors: u8,
+    passes: u8,
+) {
+    if M.width == 0 || M.height == 0 || passes == 0 || chunk_map.chunks.is_empty() {
         return;
     }
 
-    for _ in 0..passes {
-        let src = M.data.clone();
+    // Recover the global cell-space origin of the dense map so chunk-local coordinates
+    // can be converted into pixel coordinates inside M.
+    let (min_cell_x, _, min_cell_y, _) = _map_cell_bounds(chunk_map);
 
-        for y in 0..M.height {
-            for x in 0..M.width {
-                if src[y][x] != 0 {
+    let chunk_size_usize = chunk_map.chunk_size as usize;
+    let chunk_area = chunk_size_usize * chunk_size_usize;
+
+    // Build the initial list of fill candidates only once before the iterative passes.
+    //
+    // The goal here is to avoid scanning the full dense map during every fill round.
+    // Instead, we use the sparse chunk map to identify which regions are actually active,
+    // and inside those active chunks we collect only the cells that are currently empty.
+    //
+    // To make this fast, each chunk is first converted into a temporary local occupancy mask.
+    // That mask tells us which local chunk cells are already occupied by real map data.
+    // After that, we do one dense scan over the local chunk footprint and save only the
+    // empty cells as candidate pixels that may later be filled by the gap-filling step.
+    //
+    // This is much faster than asking the hashmap for every cell in the chunk footprint,
+    // because the occupancy mask turns repeated hashmap lookups into cheap array indexing.
+    let mut empty_cells: Vec<(usize, usize)> = Vec::new();
+    let mut occupied = vec![false; chunk_area];
+
+    for (chunk_coord, chunk) in &chunk_map.chunks {
+        let chunk_base_x = chunk_coord.x * chunk_map.chunk_size;
+        let chunk_base_y = chunk_coord.y * chunk_map.chunk_size;
+
+        // Reset the temporary local occupancy mask for this chunk.
+        // The mask is reused for every chunk to avoid reallocating memory.
+        occupied.fill(false);
+
+        // Mark which local cells inside this chunk are already occupied
+        // according to the sparse chunk data structure.
+        //
+        // After this step:
+        // - occupied[...] = true  means the cell already contains valid map data
+        // - occupied[...] = false means the cell is empty and may become a fill candidate
+        for local_cell_coord in chunk.data.keys() {
+            let lx = local_cell_coord.x as usize;
+            let ly = local_cell_coord.y as usize;
+
+            occupied[ly * chunk_size_usize + lx] = true;
+        }
+
+        // Scan the full local chunk footprint and collect only the empty cells.
+        //
+        // These empty cells are converted from local chunk coordinates into dense map
+        // coordinates (x, y) inside M, and stored in `empty_cells`.
+        // That gives us one compact work list of pixels that the iterative fill
+        // algorithm should actually consider later.
+        for local_y in 0..chunk_size_usize {
+            for local_x in 0..chunk_size_usize {
+                if occupied[local_y * chunk_size_usize + local_x] {
                     continue;
                 }
 
-                let y0 = y.saturating_sub(1);
-                let y1 = (y + 1).min(M.height - 1);
-                let x0 = x.saturating_sub(1);
-                let x1 = (x + 1).min(M.width - 1);
+                let global_x = chunk_base_x + local_x as i64;
+                let global_y = chunk_base_y + local_y as i64;
 
-                let mut sum = 0;
-                let mut count = 0;
+                let x = (global_x - min_cell_x) as usize;
+                let y = (global_y - min_cell_y) as usize;
 
-                for ny in y0..=y1 {
-                    for nx in x0..=x1 {
-                        if nx == x && ny == y {
-                            continue;
-                        }
-
-                        let v = src[ny][nx];
-                        if v != 0 {
-                            sum += v as u32;
-                            count += 1;
-                        }
-                    }
-                }
-
-                if count >= min_neighbors {
-                    M.data[y][x] = (sum as f64 / count as f64).round() as u8;
+                if x < M.width && y < M.height {
+                    empty_cells.push((x, y));
                 }
             }
+        }
+    }
+
+    // Run the gap-filling step iteratively using only the candidate empty cells
+    // collected earlier from the active chunk regions.
+    //
+    // The purpose of this stage is to gradually fill small holes in the dense map
+    // without scanning the full image every time. Instead, each pass works only on
+    // the current list of still-empty candidate pixels.
+    //
+    // At the start of each pass, the current map is copied into `src`.
+    // This frozen copy is used for all neighborhood checks during that pass, so
+    // newly filled pixels do not immediately influence other pixels in the same round.
+    //
+    // Any pixel that gets filled is removed from future work automatically.
+    // Any pixel that still cannot be filled is kept in a new candidate list for the
+    // next pass. This means the work list shrinks over time, making later passes cheaper.
+    for _ in 0..passes {
+        if empty_cells.is_empty() {
+            break;
+        }
+
+        let src = M.data.clone();
+        let mut next_empty_cells: Vec<(usize, usize)> = Vec::with_capacity(empty_cells.len());
+        let mut any_filled = false;
+
+        // Process each currently empty candidate pixel and check whether it now has
+        // enough valid support in its local 3x3 neighborhood to be filled.
+        //
+        // Pixels that succeed are written into M.
+        // Pixels that still lack enough support are carried forward into the next pass.
+        for &(x, y) in &empty_cells {
+            // Skip if already filled from an earlier pass.
+            if src[y][x] != 0 {
+                continue;
+            }
+
+            // Define the local 3x3 neighborhood around this empty cell.
+            let y0 = y.saturating_sub(1);
+            let y1 = (y + 1).min(M.height - 1);
+            let x0 = x.saturating_sub(1);
+            let x1 = (x + 1).min(M.width - 1);
+
+            // Collect valid neighboring intensities from the frozen source map.
+            // Only nonzero pixels count as real support for the fill.
+            let mut sum = 0u32;
+            let mut count = 0u8;
+
+            for ny in y0..=y1 {
+                for nx in x0..=x1 {
+                    if nx == x && ny == y {
+                        continue;
+                    }
+
+                    let v = src[ny][nx];
+                    if v != 0 {
+                        sum += v as u32;
+                        count += 1;
+                    }
+                }
+            }
+
+            // Fill the current empty pixel only if enough valid neighbors exist nearby.
+            // Otherwise, keep it in the candidate list so it can be retried in a later pass
+            // after surrounding pixels may have been filled.
+            if count >= min_neighbors {
+                M.data[y][x] = (sum as f64 / count as f64).round() as u8;
+                any_filled = true;
+            } else {
+                next_empty_cells.push((x, y));
+            }
+        }
+
+        // Replace the old candidate list with only the cells that are still unresolved.
+        // This makes the next pass cheaper because already-filled pixels are no longer tracked.
+        empty_cells = next_empty_cells;
+
+        // Stop early if this pass could not fill anything.
+        // In that case, more passes would do the same useless work again.
+        if !any_filled {
+            break;
         }
     }
 }
@@ -1072,17 +1208,16 @@ fn _fill_small_gaps(M: &mut Map, min_neighbors: u8, passes: u8) {
 pub fn _chunk_manager_add(
     cell_map_m: &CellMapM,
     chunk_map: &mut ChunkMap,
-    chunk_size: i64,
 ) {
     for (cell_coord_m, cell_data_m) in &cell_map_m.map_m {
         let chunk_coord = ChunkCoord {
-            x: cell_coord_m.x_m.div_euclid(chunk_size),
-            y: cell_coord_m.y_m.div_euclid(chunk_size),
+            x: cell_coord_m.x_m.div_euclid(chunk_map.chunk_size),
+            y: cell_coord_m.y_m.div_euclid(chunk_map.chunk_size),
         };
 
         let local_cell_coord = CellCoord {
-            x: cell_coord_m.x_m.rem_euclid(chunk_size),
-            y: cell_coord_m.y_m.rem_euclid(chunk_size),
+            x: cell_coord_m.x_m.rem_euclid(chunk_map.chunk_size),
+            y: cell_coord_m.y_m.rem_euclid(chunk_map.chunk_size),
         };
 
         let chunk = chunk_map
@@ -1090,7 +1225,7 @@ pub fn _chunk_manager_add(
             .entry(chunk_coord)
             .or_insert_with(|| Chunk {
                 age: 0,
-                data: HashMap::new(),
+                data: Default::default(),
             });
 
         chunk.age = 0;
@@ -1115,11 +1250,11 @@ pub fn _chunk_manager_add(
 #[allow(non_snake_case)]
 pub fn _chunk_manager_prune(
     chunk_map: &mut ChunkMap,
-    max_age: u32,
 ) {
+    let chunk_max_age = chunk_map.chunk_max_age;
     chunk_map
         .chunks
-        .retain(|_, chunk| chunk.age <= max_age);
+        .retain(|_, chunk| chunk.age <= chunk_max_age);
 }
 
 // Increments the age of every active chunk by 1.
@@ -1135,186 +1270,3 @@ pub fn _chunk_manager_age(
     }
 }
 // Chunk Management Functions (STOP) --------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-// !
-! DELETE THIS LATER !
-? For now this might come in useful
-// Converts first-bottom-return slant range from meters into a sample/bin index.
-//
-// The conversion uses the slant-range resolution of the swath:
-//     slant_resolution = max_range / samples_per_beam
-//
-// The result is clamped so it always stays inside the valid array bounds.
-fn _range_to_bin(
-    swath: &SwathProcessed,
-    max_range: f64,
-    scale: f64,
-    r: f64,
-) -> usize {
-    let slant_resolution = max_range/swath.samples_per_beam as f64;
-    let r_scaled = r * scale;
-    let bin = (r_scaled/slant_resolution).floor();
-    let bin_fbr = bin.clamp(0.0, swath.samples_per_beam as f64) as usize;
-
-    return bin_fbr;
-}
-
-// Slant Range Correction Functions (START) --------------------------------------------------
-// Converts both sonar channels from slant range to ground range.
-//
-// Why this is needed:
-// After blind-zone removal, the remaining samples still represent distance
-// along the acoustic path of the sonar beam. That is useful for raw sensing,
-// but not ideal for later mapping, since equal bin spacing in slant range does
-// not correspond to equal horizontal spacing on the seabed.
-//
-// This step projects each valid sample onto the seabed plane using the
-// corrected transducer height estimated earlier. In practice, this reduces the
-// across-track geometric distortion that appears when the swath is kept purely
-// in beam coordinates.
-//
-// High-level algorithm:
-// 1. Process port and starboard independently.
-// 2. Read each channel in logical near->far order.
-// 3. Convert each valid slant-range sample to horizontal ground range.
-// 4. Place the projected sample into its corresponding ground-range bin.
-// 5. Write the result back in the channel's native storage order.
-//
-// Note:
-// This implementation currently uses a direct bin remap without interpolation.
-// That means some ground bins may remain empty, but it keeps the method simple,
-// fast, and close to the raw measured structure.
-// Next phases of the sonar processing pipeline will do probabilistic interpolation
-// to fill these gaps fast and accurately
-fn _slant_to_ground(
-    port: &[u8],
-    starboard: &[u8],
-    swath: &SwathProcessed,
-    sonar: &SonarParams,
-    geometric_correction_data: &GeometricCorrection,
-) -> (Vec<u8>, Vec<u8>) {
-    let port = _collect_ground_samples(
-        port,
-        geometric_correction_data.h_port,
-        sonar.transducer_port.max_range,
-        sonar.transducer_port.is_reversed,
-        sonar.transducer_port.blind_zone_scale,
-        swath,
-    );
-    let starboard = _collect_ground_samples(
-        starboard,
-        geometric_correction_data.h_stb,
-        sonar.transducer_stb.max_range,
-        sonar.transducer_stb.is_reversed,
-        sonar.transducer_stb.blind_zone_scale,
-        swath,
-    );
-
-    return (port, starboard);
-}
-
-// Projects one channel from slant-range bins into ground-range bins.
-//
-// Why this is needed:
-// A sonar channel is sampled uniformly in slant range, but after projection to
-// the seabed the corresponding horizontal ground positions are no longer the
-// same as the original beam positions. This function remaps each valid sample
-// to the ground-range bin where it physically belongs.
-//
-// Algorithm:
-// 1. Walk through the channel in logical near->far order.
-// 2. Skip samples that were already masked out by blind-zone removal.
-// 3. Convert the current bin index into physical slant range.
-// 4. Project that slant range to horizontal ground range using flat-seabed geometry.
-// 5. Convert the ground range back to a discrete output bin index.
-// 6. Write the intensity into that projected output bin.
-//
-// Notes:
-// - The output keeps the same number of bins as the input.
-// - The channel is written back in its native storage order.
-// - No interpolation is done here; empty gaps are therefore expected.
-// - If multiple projected samples land in the same output bin, the strongest
-//   intensity is kept.
-fn _collect_ground_samples(
-    channel: &[u8],
-    h_t_transducer: f64,
-    max_range: f64,
-    is_reversed: bool,
-    blind_zone_scale: f64,
-    swath: &SwathProcessed,
-) -> Vec<u8> {
-    let n_bins: usize = channel.len();
-    let slant_resolution = max_range/swath.samples_per_beam as f64;
-
-    let mut ground_channel = vec![0u8; n_bins];
-
-    for slant_bin in 0..n_bins {
-        let source_index = if is_reversed {
-            n_bins - 1 - slant_bin
-        } else {
-            slant_bin
-        };
-
-        let intensity = channel[source_index];
-
-        // Samples already masked by the blind-zone step are invalid for seabed
-        // projection, so only nonzero returns are processed further.
-        if intensity == 0 { continue; }
-
-        // Convert the current discrete bin into physical slant range and project
-        // it onto the seabed plane. Samples that still fall below the corrected
-        // transducer height would produce invalid geometry and are skipped.
-        //
-        // NOTE:
-        // The blind-zone scale is also used here as an empirical correction.
-        // In practice, using the pure geometric slant bin directly tended to
-        // over-expand the nadir / blind-zone region. Applying the same tuning
-        // factor here gave a better match to the observed sonar image.
-        let slant_range = slant_bin as f64 * slant_resolution/blind_zone_scale;
-        if slant_range <= h_t_transducer { continue; }
-
-        let ground_range = (slant_range * slant_range - h_t_transducer * h_t_transducer).sqrt();
-
-        // Convert projected ground range back to the nearest output ground bin.
-        // Any sample that lands outside the valid channel bounds is ignored.
-        //
-        // NOTE:
-        // The same empirical scale factor is applied here as well. This is not a
-        // purely geometric correction, but a practical tuning that currently
-        // gives the best visual and spatial agreement with the real data.
-        let ground_bin = _range_to_bin(
-            swath,
-            max_range,
-            blind_zone_scale,
-            ground_range,
-        );
-        if ground_bin >= n_bins { continue; }
-
-        // Convert the logical near->far ground bin back into the channel's native
-        // storage order before writing the projected intensity.
-        let target_index = if is_reversed {
-            n_bins - 1 - ground_bin
-        } else {
-            ground_bin
-        };
-
-        ground_channel[target_index] = ground_channel[target_index].max(intensity);
-    }
-
-    return ground_channel;
-}
-// Slant Range Correction Functions (STOP) --------------------------------------------------
-*/

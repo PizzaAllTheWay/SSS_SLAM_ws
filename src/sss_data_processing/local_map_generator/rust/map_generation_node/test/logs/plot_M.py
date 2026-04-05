@@ -1,5 +1,5 @@
-# plot_chunk_map.py
 import os
+import numpy as np
 from utils import (
     get_newest_file,
     load_csv,
@@ -19,8 +19,8 @@ if __name__ == "__main__":
     # START_T = 1756381086.0
     # END_T = 1756381250.0
 
-    # ! TODO: Should be a import from YAML file !
-    MAP_RESOLUTION = 30.0/1000.0
+    # ! YAW OFFSET
+    YAW_OFFSET = -np.pi/2.0
 
     map_df = load_csv(
         get_newest_file(DATA_DIR, "map"),
@@ -30,6 +30,6 @@ if __name__ == "__main__":
 
     plot_map_interactive(
         map_df,
-        map_resolution=MAP_RESOLUTION,
-        title="Dense Map M",
+        title="Side Scan Sonar Map M",
+        yaw_offset = YAW_OFFSET,
     )

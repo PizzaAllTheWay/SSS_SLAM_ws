@@ -1,5 +1,6 @@
 # plot_chunk_map.py
 import os
+import numpy as np
 from utils import (
     get_newest_file,
     load_csv,
@@ -23,6 +24,9 @@ if __name__ == "__main__":
     CHUNK_SIZE = 64
     MAP_RESOLUTION = 30.0/1000.0
 
+    # ! YAW OFFSET
+    YAW_OFFSET = -np.pi/2.0
+
     chunk_map_df = load_csv(
         get_newest_file(DATA_DIR, "chunk_map"),
         start_t=START_T,
@@ -41,4 +45,5 @@ if __name__ == "__main__":
         chunk_size=CHUNK_SIZE,
         map_resolution=MAP_RESOLUTION,
         title="Chunk Map: V and P",
+        yaw_offset=YAW_OFFSET,
     )

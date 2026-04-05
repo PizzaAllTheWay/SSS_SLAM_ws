@@ -1,4 +1,8 @@
-use std::collections::HashMap;
+// ? NOTE: Use FxHashMap here instead of the default std HashMap because this code is
+// ? performance-critical and does a very large number of hashmap operations on internal,
+// ? non-hostile numeric keys. FxHashMap uses a faster non-cryptographic hasher, which
+// ? reduces hashing overhead and improves runtime in hot paths like map/chunk/cell access.
+use rustc_hash::FxHashMap;
 
 
 
@@ -74,8 +78,8 @@ pub struct SonarParams {
 pub struct QPixel {
     // Pixel position in world/map space
     // Should be equal discrete steps between pixels
-    pub x: f64,
-    pub y: f64,
+    pub x: f64, // [m]
+    pub y: f64, // [m]
 }
 
 pub struct CellDataM {
@@ -88,82 +92,96 @@ pub struct CellDataM {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CellCoordM {
     // Discrete cell coordinate inside the map/grid from the current measurement m
-    pub x_m: i64,
-    pub y_m: i64,
+    pub x_m: i64, // [pixel]
+    pub y_m: i64, // [pixel]
 }
 
 pub struct CellMapM {
     // Cell data structure from the current measurement m combining everything into 1
-    pub map_m: HashMap<CellCoordM, CellDataM>,
+    pub map_m: FxHashMap<CellCoordM, CellDataM>,
 }
 impl CellMapM {
     pub fn new() -> Self {
         Self {
-            map_m: HashMap::new(),
+            map_m: Default::default(),
         }
     }
 }
 
 pub struct CellData {
     // Data inside each cell inside the chunk
-    pub v: f64,    // Accumulated intensity value
-    pub p: f64,    // Accumulated probability value
+    pub v: f64, // Accumulated intensity value
+    pub p: f64, // Accumulated probability value
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CellCoord {
     // Discrete cell coordinate inside the map/grid
-    pub x: i64,
-    pub y: i64,
+    pub x: i64, // [pixel]
+    pub y: i64, // [pixel]
 }
 
 pub struct Chunk {
     // Chunk data structure combining everything into 1
     // Should be used in combination with a chunk manager to handle this data structure properly
     pub age: u32,
-    pub data: HashMap<CellCoord, CellData>,
+    pub data: FxHashMap<CellCoord, CellData>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkCoord {
     // Coordinate of the chunk in chunk grid
-    pub x: i64,
-    pub y: i64,
+    pub x: i64, // [pixel]
+    pub y: i64, // [pixel]
 }
 
 pub struct ChunkMap {
     // Sparse storage of all active chunks
     // Key = chunk coordinate
     // Value = chunk data
-    pub chunks: HashMap<ChunkCoord, Chunk>,
+    pub chunk_size: i64,
+    pub chunk_max_age: u32,
+    pub chunks: FxHashMap<ChunkCoord, Chunk>,
 }
 impl ChunkMap {
-    pub fn new() -> Self {
+    pub fn new(
+        chunk_size: i64,
+        chunk_max_age: u32
+    ) -> Self {
         Self {
-            chunks: HashMap::new(),
+            chunk_size,
+            chunk_max_age,
+            chunks: Default::default(),
         }
     }
 }
 
 pub struct Pose2DMap {
     // Position in pixels on the map
-    pub x: i64,
-    pub y: i64,
+    pub x: i64, // [pixel]
+    pub y: i64, // [pixel]
 
     // Yaw in [rad]
-    pub yaw: f64,
+    pub yaw: f64, // [rad]
 }
 
 pub struct Map {
     pub pose: Pose2DMap,
-    pub width: usize,
-    pub height: usize,
+    pub resolution: f64,    // in meters per pixel [m/pixel]
+    pub width: usize,       // [pixel]
+    pub height: usize,      // [pixel]
     pub data: Vec<Vec<u8>>, // M[y][x]
 }
 impl Map {
-    pub fn new(pose: Pose2DMap, width: usize, height: usize) -> Self {
+    pub fn new(
+        pose: Pose2DMap,
+        resolution: f64,
+        width: usize,
+        height: usize
+    ) -> Self {
         Self {
             pose,
+            resolution,
             width,
             height,
             data: vec![vec![0u8; width]; height],

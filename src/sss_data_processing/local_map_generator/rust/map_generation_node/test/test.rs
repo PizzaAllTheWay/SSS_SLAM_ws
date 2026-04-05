@@ -5,8 +5,10 @@
 
 
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::time::Instant;
 
 use map_generation_node::map_generation_lib::types::*;
 use map_generation_node::map_generation_lib::generator::MapGenerator;
@@ -128,7 +130,7 @@ impl LoggerMap {
         Self {
             logger: Logger::new(
                 "map",
-                &["t", "pose_x", "pose_y", "pose_yaw", "width", "height", "map"],
+                &["t", "pose_x", "pose_y", "pose_yaw", "resolution", "width", "height", "map"],
             ),
         }
     }
@@ -146,6 +148,7 @@ impl LoggerMap {
             map.pose.x.to_string(),
             map.pose.y.to_string(),
             map.pose.yaw.to_string(),
+            map.resolution.to_string(),
             map.width.to_string(),
             map.height.to_string(),
             map_str,
@@ -311,20 +314,30 @@ fn main() {
     // *Testing: 0.9995 =>   6 000 samples
     let beam_weight_threshold = 0.9993;
 
-
     // ! TODO: Fill In
-    // Fill in variables
-    // How many neghbous with values to actualy fill the empty pixel
-    // If fill_inn_min_neighbors high, the criteria fo rpixel to fill in is very strict, to big and no fill in wil happen (ie > 8 or more)
-    // If fill_inn_min_neighbors is to low it will fill in way to early or miht even fit things worng (ie < 1 or less)
-    // also how many lpasse we do because 1 pass will not be enough, 
-    // After 1 pass we will fill in most of the gaps but not all so need a second round
-    // The 3rd round is just to make sure there is no deadspace at all left
-    // Note that having  fill_inn_passes to high will mean preformance if real time will tank as you go over million sof pixels over and over again
-    // SO recomend to have no more than 5 fill inn passes to keep it real time
+    // `fill_inn_min_neighbors` controls how many valid surrounding pixels are required
+    // before an empty pixel is allowed to be filled.
+    // - higher value -> stricter fill, may leave more gaps and may require more passes
+    // - lower value  -> more aggressive fill, may overfill unsupported regions
+    // - WARNING: values above 8 will never work, because the algorithm only checks
+    //   the 8 neighboring pixels in the local 3x3 window around the empty center pixel
+    //
+    // `fill_inn_passes` controls how many fill rounds are run.
+    // More passes allow the fill to propagate further through connected gaps,
+    // but also increase runtime.
+    //
+    // A range of about 1 to 10 passes is usually enough.
+    // 5 passes gave the best result here.
     let fill_inn_min_neighbors = 3;
-    let fill_inn_passes = 3;
+    let fill_inn_passes = 5;
 
+    // ! TODO: Map Offest Yaw 
+    // For some Reason when making map the yaw is offset by 90 degrees
+    // This is NOT suposed to happen
+    // The reson thsi happaens is because state estimator has different frames
+    // INstead of fixing this a temporary solution is just to subtract 90 degrees from yaw when mapping 
+    // Not ideal and should be made better
+    let map_offset_yaw = -PI/2.0;
 
     let mut map_generator = MapGenerator::new(
         sonar,
@@ -335,6 +348,7 @@ fn main() {
         probabilistic_map_threshold,
         fill_inn_min_neighbors,
         fill_inn_passes,
+        map_offset_yaw,
     );
 
     // init logger before loop
@@ -345,6 +359,13 @@ fn main() {
     // Mapping logic
     let mut prev_t: Option<f64> = None;
     let mut ping_counter: usize = 0;
+
+    // Timing for performance analytics buffers
+    let mut total_buffer_processed_swath_into_map_s = 0.0;
+    let mut total_calculate_map_s = 0.0;
+
+    let mut count_buffer_processed_swath_into_map: usize = 0;
+    let mut count_calculate_map: usize = 0;
 
     for _ in 0..n {
         let pose_interpolated_line = pose_interpolated_iter.next().unwrap().unwrap();
@@ -377,11 +398,14 @@ fn main() {
         };
 
         // run map buffering
+        let t_start = Instant::now();
         map_generator.buffer_processed_swath_into_map(
             &pose,
             geometric_correction,
             swath_processed,
         );
+        total_buffer_processed_swath_into_map_s += t_start.elapsed().as_secs_f64();
+        count_buffer_processed_swath_into_map += 1;
 
         // get current swath map data and log it every loop
         let cell_map_m = map_generator.get_cell_map_m();
@@ -405,7 +429,11 @@ fn main() {
         }
 
         if buffer_full {
+            let t_start = Instant::now();
             let map = map_generator.calculate_map(&pose);
+            total_calculate_map_s += t_start.elapsed().as_secs_f64();
+            count_calculate_map += 1;
+
             logger_map.log(t, &map);
 
             let chunk_map = map_generator.get_chunk_map();
@@ -416,4 +444,34 @@ fn main() {
 
         prev_t = Some(t);
     }
+
+    // Performance light analysis
+    let avg_buffer_processed_swath_into_map_s =
+        if count_buffer_processed_swath_into_map > 0 {
+            total_buffer_processed_swath_into_map_s
+                / count_buffer_processed_swath_into_map as f64
+        } else {
+            0.0
+        };
+
+    let avg_calculate_map_s =
+        if count_calculate_map > 0 {
+            total_calculate_map_s / count_calculate_map as f64
+        } else {
+            0.0
+        };
+
+    println!(
+        "Average buffer_processed_swath_into_map runtime: {:.6} s ({:.3} ms) over {} calls",
+        avg_buffer_processed_swath_into_map_s,
+        avg_buffer_processed_swath_into_map_s * 1e3,
+        count_buffer_processed_swath_into_map
+    );
+
+    println!(
+        "Average calculate_map runtime: {:.6} s ({:.3} ms) over {} calls",
+        avg_calculate_map_s,
+        avg_calculate_map_s * 1e3,
+        count_calculate_map
+    );
 }

@@ -114,14 +114,13 @@ def plot_cell_map_m_and_swath_interactive(
     cmap_name="copper",
     p_m_cmap_name="viridis",
     v_m_cmap_name="copper",
+    yaw_offset=0.0,
 ):
     pose_path_color = "gray"
     q_m_color = "blue"
     pose_color = "orange"
     arrow_color = "black"
     time_line_color = "red"
-
-    yaw_offset = -np.pi / 2.0
 
     # Build swath image
     port = parse_array(swath_df["port"])
@@ -349,6 +348,7 @@ def plot_qm_and_swath_interactive(
     pose_df,
     swath_df,
     title="Q_m and Processed Swath",
+    yaw_offset=0.0,
 ):
     plot_cell_map_m_and_swath_interactive(
         cell_map_m_df=cell_map_m_df,
@@ -356,6 +356,7 @@ def plot_qm_and_swath_interactive(
         swath_df=swath_df,
         left_mode="q_m",
         title=title,
+        yaw_offset=yaw_offset,
     )
 
 def plot_pm_and_swath_interactive(
@@ -363,6 +364,7 @@ def plot_pm_and_swath_interactive(
     pose_df,
     swath_df,
     title="P_m and Processed Swath",
+    yaw_offset=0.0,
 ):
     plot_cell_map_m_and_swath_interactive(
         cell_map_m_df=cell_map_m_df,
@@ -370,6 +372,7 @@ def plot_pm_and_swath_interactive(
         swath_df=swath_df,
         left_mode="p_m",
         title=title,
+        yaw_offset=yaw_offset,
     )
 
 def plot_vm_and_swath_interactive(
@@ -377,6 +380,7 @@ def plot_vm_and_swath_interactive(
     pose_df,
     swath_df,
     title="V_m and Processed Swath",
+    yaw_offset=0.0,
 ):
     plot_cell_map_m_and_swath_interactive(
         cell_map_m_df=cell_map_m_df,
@@ -384,6 +388,7 @@ def plot_vm_and_swath_interactive(
         swath_df=swath_df,
         left_mode="v_m",
         title=title,
+        yaw_offset=yaw_offset,
     )
 
 # CHUNK MAP HELPERS ----------
@@ -510,12 +515,11 @@ def plot_chunk_map_pv_interactive(
     xlabel="x [cells]",
     p_cmap_name="viridis",
     v_cmap_name="copper",
+    yaw_offset=0.0,
 ):
     pose_path_color = "gray"
     pose_color = "orange"
     arrow_color = "black"
-
-    yaw_offset = -np.pi / 2.0
 
     t0 = min(
         float(chunk_map_df["t"].iloc[0]),
@@ -738,16 +742,15 @@ def parse_map_string(map_str, width, height):
 # MAP PLOT ----------
 def plot_map_interactive(
     map_df,
-    map_resolution,
     title="Map",
     xlabel="x [cells]",
     ylabel="y [cells]",
     cmap_name="copper",
     zero_color="white",
+    yaw_offset=0.0,
 ):
     pose_color = "orange"
     arrow_color = "black"
-    yaw_offset = -np.pi / 2.0
 
     t0 = float(map_df["t"].iloc[0])
 
@@ -809,8 +812,8 @@ def plot_map_interactive(
         pose_y,
         dx,
         dy,
-        head_width=2.00,
-        head_length=2.00,
+        head_width=0.35,
+        head_length=0.55,
         length_includes_head=True,
         color=arrow_color,
     )
