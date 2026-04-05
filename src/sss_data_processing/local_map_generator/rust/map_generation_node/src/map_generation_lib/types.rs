@@ -166,7 +166,7 @@ pub struct Pose2DMap {
 }
 
 pub struct Map {
-    pub pose: Pose2DMap,
+    pub pose: Pose2DMap,    // Position of drone/origin in Map [x, y, angle] 
     pub resolution: f64,    // in meters per pixel [m/pixel]
     pub width: usize,       // [pixel]
     pub height: usize,      // [pixel]

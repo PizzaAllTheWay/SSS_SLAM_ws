@@ -11,17 +11,16 @@ from utils import (
 if __name__ == "__main__":
     DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
-    # ! Debugging
     # START_T = None
     # END_T = None
     # 5000 samples
     START_T = 1756381550.0
     END_T = 1756381750.0
-    # Test samples
-    # START_T = 1756381086.0
-    # END_T = 1756381250.0
 
-    # ! YAW OFFSET
+    # ? NOTE: `YAW_OFFSET` is currently applied as a fixed alignment correction
+    # ? between the pose yaw convention and the map/sonar ground-plane convention.
+    # ? This works for the current setup, but ideally the underlying frame definition
+    # ? should be made fully consistent so this extra offset is no longer needed.
     YAW_OFFSET = -np.pi/2.0
 
     cell_map_m_df = load_csv(

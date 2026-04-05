@@ -748,10 +748,12 @@ def plot_map_interactive(
     cmap_name="copper",
     zero_color="white",
     yaw_offset=0.0,
+    time_offset=0.0,   # [s] subtract compute / logging delay here
 ):
     pose_color = "orange"
     arrow_color = "black"
 
+    # Use compensated map time
     t0 = float(map_df["t"].iloc[0])
 
     sample_idx = len(map_df) - 1
@@ -818,7 +820,7 @@ def plot_map_interactive(
         color=arrow_color,
     )
 
-    ax.set_title(f"Map at t={t_rel:.6f}")
+    ax.set_title(f"Map at t={t_rel + time_offset:.6f}")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.grid(False)
@@ -828,17 +830,19 @@ def plot_map_interactive(
     slider = Slider(
         ax=ax_slider,
         label="t [s]",
-        valmin=float(map_df["t"].iloc[0]) - t0,
-        valmax=float(map_df["t"].iloc[-1]) - t0,
-        valinit=t_rel,
+        valmin=(float(map_df["t"].iloc[0]) - t0) + time_offset,
+        valmax=(float(map_df["t"].iloc[-1]) - t0) + time_offset,
+        valinit=t_rel + time_offset,
     )
 
     def update(val):
         nonlocal arrow
 
-        t_rel = float(slider.val)
+        t_rel_display = float(slider.val)
+        t_rel = t_rel_display - time_offset
         t_abs = t_rel + t0
 
+        # Convert back to raw logged map time for lookup
         idx = get_closest_sample_idx(map_df, t_abs)
         row = map_df.loc[idx]
 
@@ -879,7 +883,7 @@ def plot_map_interactive(
             color=arrow_color,
         )
 
-        ax.set_title(f"Map at t={t_rel:.6f}")
+        ax.set_title(f"Map at t={t_rel + time_offset:.6f}")
         fig.canvas.draw_idle()
 
     slider.on_changed(update)

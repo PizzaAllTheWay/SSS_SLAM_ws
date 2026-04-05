@@ -183,7 +183,6 @@ fn main() {
     let mut geometric_correction_iter  = geometric_correction_file.lines().skip(start_n);
     let mut swath_processed_iter= swath_processed_file.lines().skip(start_n);
 
-    // ! TODO Might have to remake Params when done so we dont have useless dead code like params that we dont use here, not right now though
     let sonar = SonarParams {
         transducer_port: TransducerParams {
             offset: Pose3D {
@@ -199,7 +198,7 @@ fn main() {
                 },
             },
             max_range: 30.0,
-            theta: 25.0_f64.to_radians(),
+            theta: 25.0_f64.to_radians(), // horizontal beam width
             is_reversed: true, // port is stored 1000 -> 0
             blind_zone_scale: 0.45, // empirically tuned from test data
         },
@@ -217,126 +216,122 @@ fn main() {
                 },
             },
             max_range: 30.0,
-            theta: 25.0_f64.to_radians(),
+            theta: 25.0_f64.to_radians(), // horizontal beam width
             is_reversed: false, // starboard is stored 0 -> 1000
             blind_zone_scale: 0.35, // empirically tuned from test data
         },
     };
 
-    // ! TODO: trigger calculate_map every N pings
-    const CALC_EVERY_N: usize = 100;
-
-    // ! TODO: trigger calculate_map if time gap between pings gets too large
-    const CALC_DT_THRESHOLD: f64 = 5.0;
-
-    // ! TODO: init map generator before loop
-    // This should ideally match the sonar sample spacing in range.
-    // RECOMMENDED: sonar max range / number of swath samples.
+    // Dense map update triggers.
     //
-    // If map_resolution is made smaller than the sonar resolution:
-    // - the map gets denser
-    // - more pixels must be simulated / interpolated / stored
-    // - runtime and memory cost increase
-    // - but no real new information is created, since the sonar did not measure that finely
+    // The dense map is rebuilt either:
+    // - after `MAP_UPDATE_EVERY_N_SWATHS` buffered swaths, or
+    // - if the time gap between consecutive swaths exceeds `MAP_UPDATE_MAX_TIME_GAP`
     //
-    // If map_resolution is made larger than the sonar resolution:
-    // - the map gets coarser
-    // - runtime and memory cost decrease
-    // - but fine details may be merged together or lost
-    //
-    // So in practice the sonar resolution is the best default tradeoff.
-    let map_resolution = 30.0/1000.0;
+    // This keeps dense map generation from running too often during high-rate data,
+    // while still forcing an update if swaths arrive too sparsely.
+    const MAP_UPDATE_EVERY_N_SWATHS: usize = 100; // [swath samples]
+    const MAP_UPDATE_MAX_TIME_GAP: f64 = 5.0; // [s]
 
-    // ! TODO: init map generator before loop
-    // Chunk size is the number of pixels per chunk in each direction.
-    // Example: 64 means each chunk stores a 64x64 pixel region of the map.
+    // Dense map resolution in meters per pixel [m/pixel]
+    //
+    // This is chosen to match the sonar slant-range sample spacing:
+    //     map_resolution = max_range/samples_per_beam = 30.0/1000 = 0.03 [m/pixel]
+    //
+    // Using the sonar sample spacing is a practical default because it keeps the map
+    // resolution consistent with the raw measurement resolution without creating
+    // unnecessary extra pixels.
+    //
+    // A smaller map resolution than the sonar resolution is possible, but usually not useful:
+    // it increases the number of pixels and compute cost while not adding real new information,
+    // since the sonar did not measure that finely.
+    //
+    // A larger map resolution is also possible and may be useful when compute is limited.
+    // That reduces the number of pixels that must be processed and stored, so runtime and memory
+    // usage improve, but some fine sonar detail will be lost because multiple measurements are
+    // merged into a coarser map representation.
+    let map_resolution = 0.03;
+
+    // Chunk size in pixels per direction for the sparse chunked map.
+    //
+    // Each chunk stores a square local patch of the global map.
+    // For example:
+    //     chunk_size = 64
+    // means each chunk represents a 64 x 64 pixel region.
+    //
+    // This parameter controls the tradeoff between chunk-management overhead and per-chunk work/memory cost.
     //
     // Larger chunk size:
-    // - fewer chunks overall
-    // - less hashmap / chunk-management overhead
-    // - but each chunk holds more memory
-    // - and updating / aging / clearing one chunk becomes heavier
+    // - fewer chunks are needed for the same total map area
+    // - less hashmap overhead, since fewer chunk entries must be created and tracked
+    // - fewer chunk-boundary crossings during map updates
+    // - but each chunk covers a larger area, so local operations inside one chunk become heavier
+    // - and more empty/unused cells may be carried inside an active chunk footprint
     //
     // Smaller chunk size:
-    // - more chunks overall
-    // - more flexible local allocation
-    // - better if only small map regions are active at a time
-    // - but more chunk-management overhead
+    // - more chunks are needed for the same total map area
+    // - more hashmap/chunk-management overhead
+    // - but active map storage becomes more spatially selective, which is useful if only small local regions are occupied at a time and per-chunk local scans / temporary masks become cheaper
     //
-    // 64x64 is a reasonable default starting point.
+    // In practice, this should be tuned based on the expected map sparsity and runtime constraints.
+    // A medium value like 64 is a reasonable starting point because it keeps the number of chunks
+    // manageable while still keeping per-chunk local processing relatively cheap.
     let chunk_size = 64;
 
-    // ! TODO: Chunk age
-    // If a chunk exeeds this age
-    // Ie it havsen been visited in that aunt of full buffer cycles CALC_EVERY_N
-    // Then that chunk will get deleted
+    // Maximum chunk age before removal.
+    //
+    // Age counts how many full map-update cycles have passed since the chunk
+    // was last touched by new data.
+    //
+    // Higher value:
+    // - keeps old map regions longer
+    // - but increases active map size and slows processing
+    //
+    // Lower value:
+    // - keeps the active map smaller and faster
+    // - but removes old regions sooner
     let chunk_max_age = 1;
 
-    // ! TODO: init map generator before loop
-    // THsi is a very importnat thesholding that is ecsential to making this real time
-    // Even after a lot of pruning we will be left with 10 000 000+ pixels per swath
-    // In order to make this managable we need to check if it makes sense to furtehr inculde all tehse pixels
-    // OFc not all pixels are important, most of them will have very little to do with the final result
-    // So we can discrad these very small contribution and focus on pixels of teh map that contribute a lot
-    // Thsi will enable real time perfoamnce as we decrease number of pixels by magnitude of factors down
-
-    // *Testing: 0.3000 => 266 000 samples
-    // *Testing: 1.0000 => 266 000 samples
-    // *Testing: 1.5000 => 167 000 samples
-    // *Testing: 1.7500 =>  79 000 samples
-    // *Testing: 1.8000 =>  76 000 samples
-    // *Testing: 1.8100 =>  60 000 samples
-    // *Testing: 1.8200 =>  40 000 samples
-    // *Testing: 1.8250 =>  26 000 samples
-    // *Testing: 1.8280 =>  10 000 samples
-    // *Testing: 1.8285 =>   4 000 samples
-    //let probabilistic_map_threshold = 1.8285;
-
-    // *Testing: 0.00200 =>  5 500 samples
-    // *Testing: 0.00205 =>  5 200 samples
-    // *Testing: 0.00210 =>  5 000 samples
-    // *Testing: 0.00215 =>  4 700 samples
-    // *Testing: 0.00220 =>  4 500 samples
-    // *Testing: 0.00225 =>  4 300 samples
-    // *Testing: 0.00250 =>  3 500 samples
-    // *Testing: 0.00275 =>  2 800 samples
-    // *Testing: 0.00300 =>  2 400 samples
-    // *Testing: 0.00500 =>    700 samples
-    // *Testing: 0.00600 =>    500 samples
+    // Pruning thresholds.
+    //
+    // `beam_weight_threshold` is the fast first-stage pruning threshold based on the
+    // cheap beam approximation. Its value is in the range [0, 1].
+    // Higher value -> more aggressive early rejection, fewer samples kept, faster runtime
+    // Lower value  -> more samples survive to the later pruning stage
+    //
+    // `probabilistic_map_threshold` is the second-stage pruning threshold based on the
+    // more exact probabilistic beam model. This value is also nonnegative, but in practice
+    // it is usually kept very small because the integrated probabilities are small.
+    // Higher value -> more aggressive pruning, fewer samples kept
+    // Lower value  -> more samples preserved, more detail kept, higher compute cost
+    //
+    // ? NOTE:
+    // ? Small changes in either of these thresholds can cause large changes in how many
+    // ? samples survive pruning, so even small tuning adjustments may have a big effect
+    // ? on both the final map and the runtime.
+    let beam_weight_threshold = 0.9993;
     let probabilistic_map_threshold = 0.002000;
 
-    // ! TODO: Very imprtant early pruning
-    // This is an even earlier prunning parameter
-    // Very imprtant
-    // *Testing: 0.9900 =>  27 000 samples
-    // *Testing: 0.9990 =>  10 000 samples
-    // *Testing: 0.9993 =>   8 000 samples
-    // *Testing: 0.9995 =>   6 000 samples
-    let beam_weight_threshold = 0.9993;
-
-    // ! TODO: Fill In
-    // `fill_inn_min_neighbors` controls how many valid surrounding pixels are required
-    // before an empty pixel is allowed to be filled.
-    // - higher value -> stricter fill, may leave more gaps and may require more passes
-    // - lower value  -> more aggressive fill, may overfill unsupported regions
-    // - WARNING: values above 8 will never work, because the algorithm only checks
-    //   the 8 neighboring pixels in the local 3x3 window around the empty center pixel
+    // Local gap-fill tuning.
     //
-    // `fill_inn_passes` controls how many fill rounds are run.
-    // More passes allow the fill to propagate further through connected gaps,
-    // but also increase runtime.
+    // `fill_inn_min_neighbors` sets how many valid neighbors are required
+    // before an empty pixel is filled.
+    // Higher value -> stricter fill
+    // Lower value  -> more aggressive fill
+    // Values above 8 can never succeed, since only the 8 surrounding pixels are checked.
     //
-    // A range of about 1 to 10 passes is usually enough.
-    // 5 passes gave the best result here.
+    // `fill_inn_passes` sets how many fill rounds are allowed.
+    // More passes fill deeper connected gaps, but increase runtime.
+    // Around 1 to 10 passes is usually enough; 5 worked well here.
     let fill_inn_min_neighbors = 3;
     let fill_inn_passes = 5;
 
-    // ! TODO: Map Offest Yaw 
-    // For some Reason when making map the yaw is offset by 90 degrees
-    // This is NOT suposed to happen
-    // The reson thsi happaens is because state estimator has different frames
-    // INstead of fixing this a temporary solution is just to subtract 90 degrees from yaw when mapping 
-    // Not ideal and should be made better
+    // ? NOTE:
+    // ? Temporary yaw alignment correction used during map generation.
+    // ? The current pose yaw convention and the map/sonar ground-plane convention
+    // ? are offset by 90 degrees, so this fixed correction is applied to align them.
+    // ? This is only a workaround for the current frame mismatch and should ideally
+    // ? be removed once the underlying frame definitions are made fully consistent.
     let map_offset_yaw = -PI/2.0;
 
     let mut map_generator = MapGenerator::new(
@@ -418,12 +413,12 @@ fn main() {
         ping_counter += 1;
 
         let mut buffer_full = false;
-        if ping_counter >= CALC_EVERY_N {
+        if ping_counter >= MAP_UPDATE_EVERY_N_SWATHS {
             buffer_full = true;
         } 
         else if let Some(t_prev) = prev_t {
             let t_dt = t - t_prev;
-            if t_dt > CALC_DT_THRESHOLD {
+            if t_dt > MAP_UPDATE_MAX_TIME_GAP {
                 buffer_full = true;
             }
         }
