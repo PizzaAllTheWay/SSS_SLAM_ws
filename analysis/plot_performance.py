@@ -10,6 +10,7 @@ T_DELTA = 5.0
 DATASETS = {
     "state_estimator": "src/sss_data_processing/state_estimator/logs/data/performance_20260313_033514.csv",
     "swath_processing": "src/sss_data_processing/local_map_generator/logs/data/swath/performance_1774645054.csv",
+    "map_generation": "src/sss_data_processing/local_map_generator/logs/data/map/performance_1775446286.csv",
 }
 
 

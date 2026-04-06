@@ -31,6 +31,7 @@ pub struct Pose3D {
     pub orientation: Orientation,
 }
 
+#[derive(Clone)]
 pub struct GeometricCorrection {
     // Corrected vertical altitude from each transducer to seabed [m]
     pub h_port: f64,

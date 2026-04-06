@@ -14,7 +14,7 @@ if __name__ == "__main__":
     # 5000 samples
     START_T = 1756381550.0
     END_T = 1756381750.0
-    TIME_OFFSET = 70.0 # Purely for syncing relative data time with other graphs because teh whole map gets generated later
+    TIME_OFFSET = 10.0 # Purely for syncing relative data time with other graphs because teh whole map gets generated later
 
     # ? NOTE: `YAW_OFFSET` is currently applied as a fixed alignment correction
     # ? between the pose yaw convention and the map/sonar ground-plane convention.

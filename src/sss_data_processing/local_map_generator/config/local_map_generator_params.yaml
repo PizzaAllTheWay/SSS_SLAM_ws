@@ -1,6 +1,7 @@
 /**:
   ros__parameters:
     local_map_generator:
+      # Swath Processing (START) -------------------------------------------------- 
       # Smoothing period used for estimating the illumination envelope during
       # intensity normalization. This helps remove slow range-dependent brightness
       # changes caused by sonar physics rather than actual seabed texture.
@@ -10,8 +11,105 @@
       #
       # Start around 100-300 and tune experimentally for your sonar and dataset.
       illumination_ema_period: 200
+      # Swath Processing (STOP) -------------------------------------------------- 
 
-      # ! TODO: Rewrite this to be better and more descriptive of all variables
+
+
+      # Map Generation (START) --------------------------------------------------
+      # Dense map update triggers.
+      #
+      # The dense map is rebuilt either:
+      # - after `map_update_every_n_swaths` buffered swaths, or
+      # - if the time gap between consecutive swaths exceeds `map_update_max_time_gap`
+      #
+      # This keeps dense map generation from running too often during high-rate data,
+      # while still forcing an update if swaths arrive too sparsely.
+      map_update_every_n_swaths: 100 # [swath samples]
+      map_update_max_time_gap:   5.0 # [s]
+
+      # Dense map resolution in meters per pixel [m/pixel].
+      #
+      # This is chosen to match the sonar slant-range sample spacing:
+      #     map_resolution = max_range / samples_per_beam = 30.0/1000 = 0.03
+      #
+      # A smaller value is possible, but usually just adds more pixels and compute
+      # without adding real new information.
+      #
+      # A larger value gives a coarser map, but reduces runtime and memory usage.
+      map_resolution: 0.03
+
+      # Chunk size in pixels per direction for the sparse chunked map.
+      #
+      # Larger chunk size:
+      # - fewer chunks
+      # - less hashmap overhead
+      # - heavier per-chunk local work
+      #
+      # Smaller chunk size:
+      # - more chunks
+      # - more chunk-management overhead
+      # - cheaper per-chunk local scans
+      #
+      # 64 is a reasonable starting point.
+      chunk_size: 64
+
+      # Maximum chunk age before removal.
+      #
+      # Age counts how many full map-update cycles have passed since the chunk
+      # was last touched by new data.
+      #
+      # Higher value:
+      # - keeps old map regions longer
+      # - but increases active map size and slows processing
+      #
+      # Lower value:
+      # - keeps the active map smaller and faster
+      # - but removes old regions sooner
+      chunk_max_age: 2
+
+      # Pruning thresholds.
+      #
+      # `beam_weight_threshold` is the fast first-stage pruning threshold based on the
+      # cheap beam approximation. Its value is in the range [0, 1].
+      # Higher value -> more aggressive early rejection, fewer samples kept, faster runtime
+      # Lower value  -> more samples survive to the later pruning stage
+      #
+      # `probabilistic_map_threshold` is the second-stage pruning threshold based on the
+      # more exact probabilistic beam model. In practice this is usually very small.
+      # Higher value -> more aggressive pruning, fewer samples kept
+      # Lower value  -> more samples preserved, more detail kept, higher compute cost
+      #
+      # ? NOTE: 
+      # ? Small changes in either threshold can strongly affect both runtime and final map output.
+      beam_weight_threshold:       0.96850
+      probabilistic_map_threshold: 0.00187
+
+      # Local gap-fill tuning.
+      #
+      # `fill_inn_min_neighbors` sets how many valid neighbors are required
+      # before an empty pixel is filled.
+      # Higher value -> stricter fill
+      # Lower value  -> more aggressive fill
+      # Values above 8 can never succeed, since only the 8 surrounding pixels are checked.
+      #
+      # `fill_inn_passes` sets how many fill rounds are allowed.
+      # More passes fill deeper connected gaps, but increase runtime.
+      # Around 1 to 10 passes is usually enough; 5 worked well here.
+      fill_inn_min_neighbors: 3
+      fill_inn_passes:        5
+
+      # ? NOTE:
+      # ? Temporary yaw alignment correction used during map generation.
+      # ? The current pose yaw convention and the map/sonar ground-plane convention
+      # ? are offset by 90 degrees, so this fixed correction is applied to align them.
+      # ? This is only a workaround for the current frame mismatch and should ideally
+      # ? be removed once the underlying frame definitions are made fully consistent.
+      map_offset_yaw_deg: -90.0 # [deg]
+      # Map Generation (STOP) -------------------------------------------------- 
+
+
+
+      # Side Scan Sonar (START) --------------------------------------------------
       # Sonar transducer configuration for each channel.
       # Each transducer block defines how that physical sonar head is mounted and how
       # its measurements should be interpreted in the swath processing pipeline.
@@ -19,7 +117,8 @@
       # Structure:
       # - pose.position: transducer offset relative to the vehicle/body reference frame [m]
       # - pose.orientation: transducer mounting rotation relative to body frame [deg]
-      # - alpha: transducer beam opening angle [deg]
+      # - alpha: transducer vertical beam opening angle [deg]
+      # - theta: transducer horizontal beam opening angle [deg]
       # - is_reversed: tells whether samples are stored far->near instead of near->far
       # - blind_zone_scale: empirical correction factor for blind-zone removal
       #
@@ -28,11 +127,12 @@
       # points, how wide the beam is, and how the samples are stored. Port and
       # starboard often need separate configuration even when they are physically similar.
       #
-      # Blind-zone scale:
-      # This is especially important. The theoretical first-bottom-return from pure
-      # geometry often does not match the real sonar image perfectly. In practice,
-      # the blind zone usually needs empirical tuning so water-column samples are
-      # removed correctly without cutting too much valid seabed data.
+      # ? NOTE:
+      # ? Blind-zone scale:
+      # ? This is especially important. The theoretical first-bottom-return from pure
+      # ? geometry often does not match the real sonar image perfectly. In practice,
+      # ? the blind zone usually needs empirical tuning so water-column samples are
+      # ? removed correctly without cutting too much valid seabed data.
       #
       # Tuning guide:
       # - increase blind_zone_scale -> larger removed blind zone
@@ -83,3 +183,4 @@
           is_reversed: false
           # Empirical correction used when removing the blind zone
           blind_zone_scale: 0.35
+      # Side Scan Sonar (STOP) --------------------------------------------------

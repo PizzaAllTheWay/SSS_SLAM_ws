@@ -4,7 +4,10 @@ use nalgebra::{
     UnitQuaternion
 };
 // Libraries for realtime ----------
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    Arc,
+    RwLock
+};
 use futures::{
     future, 
     stream::StreamExt
@@ -74,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
     let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
     let illumination_ema_period = node.get_parameter::<i64>("local_map_generator.illumination_ema_period").ok().unwrap_or(0) as usize;
+    
     let transducer_port_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;
     let transducer_port_pose_position_y = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.y").ok().unwrap_or(0.0) as f64;
     let transducer_port_pose_position_z = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.z").ok().unwrap_or(0.0) as f64;
@@ -84,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transducer_port_alpha = node.get_parameter::<f64>("local_map_generator.transducers.port.alpha").ok().unwrap_or(0.0) as f64;
     let transducer_port_is_reversed = node.get_parameter::<bool>("local_map_generator.transducers.port.is_reversed").ok().unwrap_or(false) as bool;
     let transducer_port_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.port.blind_zone_scale").ok().unwrap_or(0.0) as f64;
+    
     let transducer_starboard_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.x").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_pose_position_y = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.y").ok().unwrap_or(0.0) as f64;
     let transducer_starboard_pose_position_z = node.get_parameter::<f64>("local_map_generator.transducers.starboard.pose.position.z").ok().unwrap_or(0.0) as f64;
@@ -96,7 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transducer_starboard_blind_zone_scale = node.get_parameter::<f64>("local_map_generator.transducers.starboard.blind_zone_scale").ok().unwrap_or(0.0) as f64;
 
     r2r::log_info!("swath_processing_node", "log: {}", LOG);
-    r2r::log_info!("swath_processing_node", "local_map_generator.illumination_ema_period: {}       ", illumination_ema_period);
+    r2r::log_info!("map_generation_node", "");
+    r2r::log_info!("swath_processing_node", "local_map_generator.illumination_ema_period: {}", illumination_ema_period);
+    r2r::log_info!("map_generation_node", "");
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.pose.position.z:        {:.4} [m]  ",        transducer_port_pose_position_z);
@@ -107,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.alpha:                  {:.6} [deg]",                  transducer_port_alpha);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.is_reversed:            {}         ",            transducer_port_is_reversed);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.port.blind_zone_scale:       {:.4}      ",       transducer_port_blind_zone_scale);
+    r2r::log_info!("map_generation_node", "");
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.x:        {:.4} [m]  ",        transducer_starboard_pose_position_x);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.y:        {:.4} [m]  ",        transducer_starboard_pose_position_y);
     r2r::log_info!("swath_processing_node", "local_map_generator.transducers.starboard.pose.position.z:        {:.4} [m]  ",        transducer_starboard_pose_position_z);
@@ -176,6 +184,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger_swath_raw = if LOG { Some(LoggerSwathRaw::new()) } else { None };
     let logger_swath_processed = if LOG { Some(LoggerSwathProcessed::new()) } else { None };
     // Initialize ROS2 (STOP) --------------------------------------------------
+
+
 
     // ROS2 Handlers (START) --------------------------------------------------
     // Spin ----------
@@ -268,7 +278,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // - copy_from_slice then fills the memory in one go
             // Compared to data[..n].to_vec():
             // - both allocate + copy
-            // - but this avoids implicit initialization / potential extra work
+            // - but this avoids implicit initialization/potential extra work
             // This matters for high-rate data (like sonar) where we want minimal overhead per message
             // SAFETY: set_len is safe here because we immediately overwrite ALL elements before use
             let data = &msg.image.data;
@@ -286,7 +296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             starboard.copy_from_slice(&data[n..2*n]);
 
             let swath_raw = SwathRaw {
-                timestamp: msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9,
+                timestamp: t,
                 port,
                 starboard,
                 samples_per_beam: msg.samples_per_beam as u64,
@@ -395,6 +405,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     // ROS2 Handlers (STOP) --------------------------------------------------
+
+
 
     // ROS2 (START) --------------------------------------------------
     tokio::join!(

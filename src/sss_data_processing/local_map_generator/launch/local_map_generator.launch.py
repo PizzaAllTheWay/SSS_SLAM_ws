@@ -26,5 +26,15 @@ def generate_launch_description():
                 local_map_generator_config,
                 {'log': LaunchConfiguration('log')}
             ]
-        )
+        ),
+        Node(
+            package='local_map_generator',
+            executable='map_generation_node',
+            name='map_generation_node',
+            output='screen',
+            parameters=[
+                local_map_generator_config,
+                {'log': LaunchConfiguration('log')}
+            ]
+        ),
     ])

@@ -165,14 +165,14 @@ fn parse_vec_u8(s: &str) -> Vec<u8> {
 
 
 fn main() {
-    let start_n = 3_500;
+    let start_n = 3_000;
     //let start_n = 1;
 
     //let n = 10_000;
     //let n = 5_000;
     //let n = 2_000;
-    //let n = 1_000;
-    let n = 500;
+    let n = 1_000;
+    //let n = 500;
     //let n = 100;
 
     let pose_interpolated_file = BufReader::new(File::open("test/data/pose_interpolated.csv").unwrap());
@@ -290,7 +290,7 @@ fn main() {
     // Lower value:
     // - keeps the active map smaller and faster
     // - but removes old regions sooner
-    let chunk_max_age = 1;
+    let chunk_max_age = 2;
 
     // Pruning thresholds.
     //
@@ -309,8 +309,8 @@ fn main() {
     // ? Small changes in either of these thresholds can cause large changes in how many
     // ? samples survive pruning, so even small tuning adjustments may have a big effect
     // ? on both the final map and the runtime.
-    let beam_weight_threshold = 0.9993;
-    let probabilistic_map_threshold = 0.002000;
+    let beam_weight_threshold = 0.9685;
+    let probabilistic_map_threshold = 0.001870;
 
     // Local gap-fill tuning.
     //

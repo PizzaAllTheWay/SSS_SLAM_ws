@@ -3,8 +3,11 @@ import glob
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import chi2
 import yaml
+from matplotlib import cm
+import json
+
+
 
 # CONFIG EXTRACTOR ----------
 def load_local_map_generator_params(config_path):
@@ -587,3 +590,275 @@ def plot_geometric_correction(
     axes[1].set_title("Raw swath with first-bottom-return overlay")
 
     finalize_plot()
+
+# MAP HELPERS ----------
+def get_closest_pose_row(pose_df, t_target):
+    idx = (pose_df["t"] - t_target).abs().idxmin()
+    return pose_df.loc[idx]
+
+def parse_map_string(map_str, width, height):
+    if pd.isna(map_str) or not str(map_str).strip() or width <= 0 or height <= 0:
+        return np.zeros((0, 0), dtype=np.uint8)
+
+    values = np.fromstring(str(map_str), sep=" ", dtype=np.uint8)
+
+    expected = width * height
+    if values.size < expected:
+        padded = np.zeros(expected, dtype=np.uint8)
+        padded[:values.size] = values
+        values = padded
+    elif values.size > expected:
+        values = values[:expected]
+
+    return values.reshape((height, width))
+
+def get_closest_sample_idx(df, t_target):
+    return (df["t"] - t_target).abs().idxmin()
+
+# FULL MAP MOSAIC ----------
+def build_and_save_full_map_mosaic(
+    map_df,
+    map_origin_df,
+    map_pose_df,
+    out_dir,
+    mosaic_name="full_map_mosaic",
+    stride=1,
+    pixel_stride=1,
+):
+    os.makedirs(out_dir, exist_ok=True)
+
+    # ---------- pass 1: global bounds ----------
+    x_mins = []
+    x_maxs = []
+    y_mins = []
+    y_maxs = []
+
+    for _, map_row in map_df.iloc[::stride].iterrows():
+        t_abs = float(map_row["t"])
+
+        origin_row = get_closest_pose_row(map_origin_df, t_abs)
+        pose_row = get_closest_pose_row(map_pose_df, t_abs)
+
+        width = int(map_row["width"])
+        height = int(map_row["height"])
+        resolution = float(map_row["resolution"]) * pixel_stride
+
+        if width <= 0 or height <= 0:
+            continue
+
+        width = int(np.ceil(width / pixel_stride))
+        height = int(np.ceil(height / pixel_stride))
+
+        origin_x_px = float(origin_row["x"]) / pixel_stride
+        origin_y_px = float(origin_row["y"]) / pixel_stride
+
+        pose_x = float(pose_row["x"])
+        pose_y = float(pose_row["y"])
+
+        x_min = pose_x - origin_x_px * resolution
+        x_max = x_min + width * resolution
+        y_min = pose_y - origin_y_px * resolution
+        y_max = y_min + height * resolution
+
+        x_mins.append(x_min)
+        x_maxs.append(x_max)
+        y_mins.append(y_min)
+        y_maxs.append(y_max)
+
+    if len(x_mins) == 0:
+        raise ValueError("No valid maps found")
+
+    global_x_min = min(x_mins)
+    global_x_max = max(x_maxs)
+    global_y_min = min(y_mins)
+    global_y_max = max(y_maxs)
+
+    base_resolution = float(map_df.iloc[0]["resolution"]) * pixel_stride
+
+    mosaic_width = int(np.ceil((global_x_max - global_x_min) / base_resolution))
+    mosaic_height = int(np.ceil((global_y_max - global_y_min) / base_resolution))
+
+    mmap_path = os.path.join(out_dir, f"{mosaic_name}.dat")
+    meta_path = os.path.join(out_dir, f"{mosaic_name}.json")
+
+    mosaic = np.memmap(
+        mmap_path,
+        dtype=np.uint8,
+        mode="w+",
+        shape=(mosaic_height, mosaic_width),
+    )
+    mosaic[:] = 0
+
+    last_pose = None
+    last_origin = None
+    last_t = None
+
+    # ---------- pass 2: stamp maps ----------
+    for _, map_row in map_df.iloc[::stride].iterrows():
+        t_abs = float(map_row["t"])
+        last_t = t_abs
+
+        origin_row = get_closest_pose_row(map_origin_df, t_abs)
+        pose_row = get_closest_pose_row(map_pose_df, t_abs)
+
+        width = int(map_row["width"])
+        height = int(map_row["height"])
+        resolution = float(map_row["resolution"])
+
+        if width <= 0 or height <= 0:
+            continue
+
+        M = parse_map_string(map_row["map"], width, height)
+        if M.size == 0:
+            continue
+
+        if pixel_stride > 1:
+            M = M[::pixel_stride, ::pixel_stride]
+
+        height, width = M.shape
+        resolution = resolution * pixel_stride
+
+        origin_x_px = float(origin_row["x"]) / pixel_stride
+        origin_y_px = float(origin_row["y"]) / pixel_stride
+
+        pose_x = float(pose_row["x"])
+        pose_y = float(pose_row["y"])
+        pose_yaw = float(pose_row["yaw"])
+
+        x_min = pose_x - origin_x_px * resolution
+        y_min = pose_y - origin_y_px * resolution
+
+        col0 = int(round((x_min - global_x_min) / resolution))
+        row0 = int(round((y_min - global_y_min) / resolution))
+        col1 = col0 + width
+        row1 = row0 + height
+
+        if row0 < 0 or col0 < 0 or row1 > mosaic_height or col1 > mosaic_width:
+            continue
+
+        target = mosaic[row0:row1, col0:col1]
+
+        mask = M != 0
+        target[mask] = M[mask]
+
+        last_pose = {
+            "x": pose_x,
+            "y": pose_y,
+            "yaw": pose_yaw,
+        }
+        last_origin = {
+            "x": x_min,
+            "y": y_min,
+        }
+
+    mosaic.flush()
+
+    metadata = {
+        "mmap_path": mmap_path,
+        "dtype": "uint8",
+        "shape": [mosaic_height, mosaic_width],
+        "resolution": base_resolution,
+        "global_x_min": global_x_min,
+        "global_y_min": global_y_min,
+        "global_x_max": global_x_max,
+        "global_y_max": global_y_max,
+        "last_pose": last_pose,
+        "last_origin": last_origin,
+        "last_t": last_t,
+        "stride": stride,
+        "pixel_stride": pixel_stride,
+    }
+
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    return mmap_path, meta_path
+
+
+def load_full_map_mosaic(meta_path):
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    mosaic = np.memmap(
+        meta["mmap_path"],
+        dtype=np.uint8,
+        mode="r",
+        shape=tuple(meta["shape"]),
+    )
+
+    return mosaic, meta
+
+
+def plot_saved_full_map_mosaic(
+    meta_path,
+    title="Full Map Mosaic",
+    xlabel="x [m]",
+    ylabel="y [m]",
+    cmap_name="copper",
+    zero_color="white",
+    yaw_offset=0.0,
+):
+    mosaic, meta = load_full_map_mosaic(meta_path)
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+
+    mosaic_masked = np.ma.masked_where(mosaic == 0, mosaic)
+
+    map_cmap = cm.get_cmap(cmap_name).copy()
+    map_cmap.set_bad(color=zero_color)
+
+    valid = mosaic[mosaic != 0]
+    vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
+    vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
+
+    ax.imshow(
+        mosaic_masked,
+        origin="lower",
+        aspect="equal",
+        cmap=map_cmap,
+        interpolation="nearest",
+        vmin=vmin,
+        vmax=vmax,
+        extent=[
+            meta["global_x_min"],
+            meta["global_x_max"],
+            meta["global_y_min"],
+            meta["global_y_max"],
+        ],
+    )
+
+    if meta["last_pose"] is not None:
+        pose_x = meta["last_pose"]["x"]
+        pose_y = meta["last_pose"]["y"]
+        pose_yaw = meta["last_pose"]["yaw"] + yaw_offset
+
+        ax.scatter(
+            [pose_x],
+            [pose_y],
+            s=90,
+            marker="x",
+            color="orange",
+            label="Latest pose",
+        )
+
+        arrow_len = 1.5
+        dx = arrow_len * np.cos(pose_yaw)
+        dy = arrow_len * np.sin(pose_yaw)
+        ax.arrow(
+            pose_x,
+            pose_y,
+            dx,
+            dy,
+            head_width=0.20,
+            head_length=0.30,
+            length_includes_head=True,
+            color="black",
+        )
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.axis("equal")
+    ax.grid(False)
+    ax.legend()
+    plt.show()
