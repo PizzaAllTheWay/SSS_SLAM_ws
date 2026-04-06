@@ -1,1 +1,2 @@
+*.csv filter=lfs diff=lfs merge=lfs -text
 src/sss_data_processing/local_map_generator/rust/feature_extraction_node/map.csv filter=lfs diff=lfs merge=lfs -text
