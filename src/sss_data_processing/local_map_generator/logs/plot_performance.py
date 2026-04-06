@@ -93,7 +93,7 @@ def main():
 
     fig, axes = create_stacked_plot(
         3,
-        title="Swath Processing Performance",
+        title="Map Generation Performance",
         xlabel="Time since t_start [s]",
         ylabels=["Runtime [ms]", "CPU [%]", "RAM [MB]"]
     )

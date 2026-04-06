@@ -30,12 +30,19 @@
       # Dense map resolution in meters per pixel [m/pixel].
       #
       # This is chosen to match the sonar slant-range sample spacing:
-      #     map_resolution = max_range / samples_per_beam = 30.0/1000 = 0.03
+      #     map_resolution = max_range/samples_per_beam = 30.0/1000 = 0.03
       #
       # A smaller value is possible, but usually just adds more pixels and compute
       # without adding real new information.
       #
-      # A larger value gives a coarser map, but reduces runtime and memory usage.
+      # A larger value gives a coarser map, less detailed, but reduces runtime and memory usage.
+      # If you are a very fine grained resolution sonar, consider larger values here to downscale the final map
+      # The next part in the sonar pipeline after map generation is feature extraction witch works well even with lower resolutions
+      # However note that lowering resolution 10x or more lower than sonar resolution will mean you will start losing a lot of information and details
+      # This might then start to affect the final map and feature extraction results
+      # So this is a tuning problem
+      # Recommend to tune this to 1x - 10x sonar resolution 
+      # Going over 10x sonar resolution will start to degrade map details
       map_resolution: 0.03
 
       # Chunk size in pixels per direction for the sparse chunked map.

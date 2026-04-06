@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(non_snake_case)]
     // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
     let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
+    
     let illumination_ema_period = node.get_parameter::<i64>("local_map_generator.illumination_ema_period").ok().unwrap_or(0) as usize;
     
     let transducer_port_pose_position_x = node.get_parameter::<f64>("local_map_generator.transducers.port.pose.position.x").ok().unwrap_or(0.0) as f64;

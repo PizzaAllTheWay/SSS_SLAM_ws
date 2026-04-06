@@ -356,8 +356,11 @@ fn main() {
     let mut ping_counter: usize = 0;
 
     // Timing for performance analytics buffers
-    let mut total_buffer_processed_swath_into_map_s = 0.0;
-    let mut total_calculate_map_s = 0.0;
+    let mut total_buffer_processed_swath_into_map_s: f64 = 0.0;
+    let mut total_calculate_map_s: f64 = 0.0;
+
+    let mut peak_buffer_processed_swath_into_map_s: f64 = 0.0;
+    let mut peak_calculate_map_s: f64 = 0.0;
 
     let mut count_buffer_processed_swath_into_map: usize = 0;
     let mut count_calculate_map: usize = 0;
@@ -399,7 +402,9 @@ fn main() {
             geometric_correction,
             swath_processed,
         );
-        total_buffer_processed_swath_into_map_s += t_start.elapsed().as_secs_f64();
+        let dt_buffer_processed_swath_into_map_s = t_start.elapsed().as_secs_f64();
+        total_buffer_processed_swath_into_map_s += dt_buffer_processed_swath_into_map_s;
+        peak_buffer_processed_swath_into_map_s = peak_buffer_processed_swath_into_map_s.max(dt_buffer_processed_swath_into_map_s);
         count_buffer_processed_swath_into_map += 1;
 
         // get current swath map data and log it every loop
@@ -426,7 +431,9 @@ fn main() {
         if buffer_full {
             let t_start = Instant::now();
             let map = map_generator.calculate_map(&pose);
-            total_calculate_map_s += t_start.elapsed().as_secs_f64();
+            let dt_calculate_map_s = t_start.elapsed().as_secs_f64();
+            total_calculate_map_s += dt_calculate_map_s;
+            peak_calculate_map_s = peak_calculate_map_s.max(dt_calculate_map_s);
             count_calculate_map += 1;
 
             logger_map.log(t, &map);
@@ -457,16 +464,22 @@ fn main() {
         };
 
     println!(
-        "Average buffer_processed_swath_into_map runtime: {:.6} s ({:.3} ms) over {} calls",
-        avg_buffer_processed_swath_into_map_s,
-        avg_buffer_processed_swath_into_map_s * 1e3,
-        count_buffer_processed_swath_into_map
+        "buffer_processed_swath_into_map runtime: \t
+         calls:   {}                              \t
+         average: {:.6} s ({:.3} ms)              \t
+         peak:    {:.6} s ({:.3} ms)              \t",
+        count_buffer_processed_swath_into_map,
+        avg_buffer_processed_swath_into_map_s, avg_buffer_processed_swath_into_map_s * 1e3,
+        peak_buffer_processed_swath_into_map_s, peak_buffer_processed_swath_into_map_s * 1e3,
     );
 
     println!(
-        "Average calculate_map runtime: {:.6} s ({:.3} ms) over {} calls",
-        avg_calculate_map_s,
-        avg_calculate_map_s * 1e3,
-        count_calculate_map
+        "calculate_map runtime:      \t
+         calls:   {}                 \t
+         average: {:.6} s ({:.3} ms) \t
+         peak:    {:.6} s ({:.3} ms) \t",
+        count_calculate_map,
+        avg_calculate_map_s, avg_calculate_map_s * 1e3,
+        peak_calculate_map_s, peak_calculate_map_s * 1e3,
     );
 }
