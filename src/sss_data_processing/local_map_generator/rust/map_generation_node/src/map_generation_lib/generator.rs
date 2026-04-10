@@ -790,7 +790,7 @@ fn _calculate_V_m_side(
         // ? intensity lookup aligned with the corrected usable sonar region, so projected
         // ? cell intensities are sampled from the same effective slant-space geometry as
         // ? the processed swath data.
-        let slant_resolution = (1.0 / blind_zone_scale) * (max_range/swath_samples as f64);
+        let slant_resolution = (1.0/blind_zone_scale) * (max_range/swath_samples as f64);
 
         let mut intensities = [0.0; 4];
 
