@@ -1,11 +1,13 @@
 # local_map_generator
 
 ## Introduction
-`local_map_generator` is a ROS 2 package that handles the processing stage of the Side Scan Sonar SLAM pipeline. 
+`local_map_generator` is a ROS 2 package that handles the local map generation stage of the Side Scan Sonar SLAM pipeline.
 
-Will have to rewrite this later when adding new nodes like probabilistic map generation and feature extraction.
+The package is currently built as a multi-stage processing pipeline. At the moment, two nodes are implemented: `swath_processing_node` and `map_generation_node`. A future feature-extraction node will be added later, so the package is not yet fully complete.
 
-`swath_processing_node`, where raw side scan sonar pings are synchronized with the current vehicle state estimate and DVL altitude, then transformed into a cleaner and more geometry aware swath representation for downstream mapping and feature extraction. The node receives the estimated vehicle pose from the state estimator, receives seabed altitude from the DVL, and receives raw sonar intensity data from the side scan sonar topic. It then performs a sequence of operations on each ping: pose/altitude handling, geometric correction, blind-zone removal, and intensity normalization before publishing the processed swath and associated intermediate geometry information.
+`swath_processing_node` synchronizes raw side scan sonar pings with the current vehicle state estimate and DVL altitude, then transforms them into a cleaner and more geometry-aware swath representation for downstream mapping and feature extraction. The node receives the estimated vehicle pose from the state estimator, receives seabed altitude from the DVL, and receives raw sonar intensity data from the side scan sonar topic. It then performs a sequence of operations on each ping: pose and altitude handling, geometric correction, blind-zone removal, and intensity normalization before publishing the processed swath and associated intermediate geometry information.
+
+`map_generation_node` receives the intermediate swath-processing outputs and uses them to build a local probabilistic map. The node buffers processed swaths into a sparse chunked map representation, performs probabilistic pruning of candidate map cells, estimates map-cell intensities from the processed sonar data, merges the port and starboard contributions, and periodically generates and publishes a dense local map together with the corresponding map pose and map origin. This output is intended to serve as the input for future downstream stages such as feature extraction.
 
 **Subscribed Topics**
 ```text
@@ -14,7 +16,7 @@ Will have to rewrite this later when adding new nodes like probabilistic map gen
 /hardware/side_scan_sonar                   [marine_acoustic_msgs/RawSonarImage]
 ```
 
-The state estimate provides the vehicle pose used to place and interpret each sonar ping. The DVL provides bottom-track altitude used to estimate transducer height above the seabed. The side scan sonar provides the raw port and starboard intensity samples that are processed into a corrected swath. 
+These topics are subscribed to by `swath_processing_node`. The state estimate provides the vehicle pose used to place and interpret each sonar ping. The DVL provides bottom-track altitude used to estimate transducer height above the seabed. The side scan sonar provides the raw port and starboard intensity samples that are processed into a corrected swath.
 
 **Intermediate Topics**
 
@@ -22,9 +24,13 @@ The state estimate provides the vehicle pose used to place and interpret each so
 /sss_slam/data_processing/swath/pose                  [geometry_msgs/PoseStamped]
 /sss_slam/data_processing/swath/geometric_correction  [geometry_msgs/PolygonStamped]
 /sss_slam/data_processing/swath/processed             [marine_acoustic_msgs/RawSonarImage]
+
+/sss_slam/data_processing/map_generation/pose         [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/map_generation/map_origin   [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/map_generation/map          [sensor_msgs/Image]
 ```
 
-These are intermediate outputs produced by the swath-processing stage. The pose topic contains the pose associated with the ping timestamp, the geometric correction topic contains the estimated first-bottom-return geometry for port and starboard, and the processed swath topic contains the corrected sonar image after blind-zone removal and intensity normalization. At the current stage these are intermediate products used inside the broader local-map-generation pipeline. More downstream mapping and feature-extraction topics can be added later.  
+These are intermediate outputs produced inside the local-map-generation pipeline. The swath-processing stage publishes the pose associated with each ping timestamp, the estimated first-bottom-return geometry for port and starboard, and the processed swath after blind-zone removal and intensity normalization. The map-generation stage then publishes the pose used for the current map update, the map origin describing where the dense map starts in the map frame, and the generated local map itself as an image. At the current stage these topics are intermediate products of the broader SLAM pipeline and are expected to be used later by downstream stages such as feature extraction.
 
 **Published Topics**
 
@@ -32,7 +38,7 @@ These are intermediate outputs produced by the swath-processing stage. The pose 
 N/A
 ```
 
-At the moment this package ends at the intermediate swath-processing stage. No final local-map output topic is published yet.
+At the current stage, this package publishes intermediate outputs for the internal SLAM processing pipeline rather than a final end-user output topic. The swath-processing outputs feed the map-generation stage, and the map-generation outputs are intended to feed future downstream stages such as feature extraction.
 
 ---
 
