@@ -44,7 +44,15 @@ impl Map {
 // TODO: Explain what thsi is for later
 #[derive(Clone, Copy)]
 pub enum MorphOp {
+    Dilate(i32),
+    Erode(i32),
     Open(i32),
     Close(i32),
+}
+
+#[derive(Clone, Copy)]
+pub enum LocalThresholdOp {
+    Bright,
+    Shadow,
 }
 

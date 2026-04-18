@@ -1,6 +1,6 @@
 // TODO: Fix these importas later not now man
 use opencv::{
-    core::{self, Mat, Size, Point},
+    core::{self, Mat, Size, Point, Vector, Scalar},
     imgproc,
 };
 
@@ -278,39 +278,75 @@ fn _filter_image(
 
 
 
-fn _segment_objects_from_background(
-    filtered_image: &Mat,
-) -> opencv::Result<Mat> {
-    // Lower and upper hysteresis thresholds for edge acceptance.
-    // Lower threshold keeps weaker edge candidates if they connect to strong edges.
-    // Upper threshold marks strong edge pixels directly.
+// fn _segment_objects_from_background(
+//     filtered_image: &Mat,
+// ) -> opencv::Result<Mat> {
+//     // Lower and upper hysteresis thresholds for edge acceptance.
+//     // Lower threshold keeps weaker edge candidates if they connect to strong edges.
+//     // Upper threshold marks strong edge pixels directly.
 
-    // ? 13 Actually better than 11
-    // let canny_threshold_low = 100.0;
-    // let canny_threshold_high = 1300.0;
-
-
-    // ? 22 ehhhhh good enough I guess for now
-    // let canny_threshold_low = 570.0;
-    // let canny_threshold_high = 1100.0;
-
-    // ? 23 Actually good
-    let canny_threshold_low = 100.0;
-    let canny_threshold_high = 1200.0;
+//     // ? 13 Actually better than 11
+//     // let canny_threshold_low = 100.0;
+//     // let canny_threshold_high = 1300.0;
 
 
+//     // ? 22 ehhhhh good enough I guess for now
+//     // let canny_threshold_low = 570.0;
+//     // let canny_threshold_high = 1100.0;
 
-    // Morphology execution sequence applied after Canny.
-    // Each entry says which operation to run and how many iterations to use.
-    // let morph_sequence = [
-    //     MorphOp::Close(3),
-    //     MorphOp::Open(2),
-    // ];
+//     // ? 23 Actually good
+//     let canny_threshold_low = 100.0;
+//     let canny_threshold_high = 1200.0;
 
-    let morph_sequence = [
-        MorphOp::Close(5),
-        MorphOp::Open(2)
-    ].repeat(20);
+
+
+//     // Morphology execution sequence applied after Canny.
+//     // Each entry says which operation to run and how many iterations to use.
+//     // let morph_sequence = [
+//     //     MorphOp::Close(3),
+//     //     MorphOp::Open(2),
+//     // ];
+
+//     let morph_sequence = [
+//         MorphOp::Close(5),
+//         MorphOp::Open(2)
+//     ].repeat(20);
+
+
+
+// fn _segment_objects_from_background(
+//     filtered_image: &Mat,
+// ) -> opencv::Result<Mat> {
+//     // Lower and upper hysteresis thresholds for edge acceptance.
+//     // Lower threshold keeps weaker edge candidates if they connect to strong edges.
+//     // Upper threshold marks strong edge pixels directly.
+
+//     // ? 13 Actually better than 11
+//     // let canny_threshold_low = 100.0;
+//     // let canny_threshold_high = 1300.0;
+
+
+//     // ? 22 ehhhhh good enough I guess for now
+//     // let canny_threshold_low = 570.0;
+//     // let canny_threshold_high = 1100.0;
+
+//     // ? 23 Actually good
+//     let canny_threshold_low = 100.0;
+//     let canny_threshold_high = 1200.0;
+
+
+
+//     // Morphology execution sequence applied after Canny.
+//     // Each entry says which operation to run and how many iterations to use.
+//     // let morph_sequence = [
+//     //     MorphOp::Close(3),
+//     //     MorphOp::Open(2),
+//     // ];
+
+//     let morph_sequence = [
+//         MorphOp::Close(5),
+//         MorphOp::Open(2)
+//     ].repeat(20);
 
 
 
@@ -321,124 +357,141 @@ fn _segment_objects_from_background(
 
     
 
-    let segmented_image_map_edge_and_objects = _get_segmented_map(
-        filtered_image,
-        canny_threshold_low,
-        canny_threshold_high,
-        &morph_sequence,
-    )?;
+//     let segmented_image_map_edge_and_objects = _get_segmented_map(
+//         filtered_image,
+//         canny_threshold_low,
+//         canny_threshold_high,
+//         &morph_sequence,
+//     )?;
 
-    return Ok(segmented_image_map_edge_and_objects);
-}
+//     return Ok(segmented_image_map_edge_and_objects);
+// }
+
+
+
+
+
+
+    
+
+//     let segmented_image_map_edge_and_objects = _get_segmented_map(
+//         filtered_image,
+//         canny_threshold_low,
+//         canny_threshold_high,
+//         &morph_sequence,
+//     )?;
+
+//     return Ok(segmented_image_map_edge_and_objects);
+// }
 
     
 
 
-// TODO: Better explamnation later not now though
-fn _get_segmented_map(
-    filtered_image: &Mat,
-    canny_threshold_low: f64,
-    canny_threshold_high: f64,
-    morph_sequence: &[MorphOp],
-) -> opencv::Result<Mat> {
-    let mut segmented_image = Mat::default();
+// // TODO: Better explamnation later not now though
+// fn _get_segmented_map(
+//     filtered_image: &Mat,
+//     canny_threshold_low: f64,
+//     canny_threshold_high: f64,
+//     morph_sequence: &[MorphOp],
+// ) -> opencv::Result<Mat> {
+//     let mut segmented_image = Mat::default();
 
-    // Sobel kernel size used internally for gradient estimation.
-    // Common values are 3, 5, or 7. Smaller is sharper/noisier, larger is smoother.
-    let canny_aperture_size = 7;
+//     // Sobel kernel size used internally for gradient estimation.
+//     // Common values are 3, 5, or 7. Smaller is sharper/noisier, larger is smoother.
+//     let canny_aperture_size = 7;
 
-    // If true, uses the more accurate L2 gradient magnitude.
-    // If false, uses a slightly cheaper approximation.
-    let canny_l2_gradient = true;
+//     // If true, uses the more accurate L2 gradient magnitude.
+//     // If false, uses a slightly cheaper approximation.
+//     let canny_l2_gradient = true;
 
-    imgproc::canny(
-        filtered_image,
-        &mut segmented_image,
-        canny_threshold_low,
-        canny_threshold_high,
-        canny_aperture_size,
-        canny_l2_gradient,
-    )?;
+//     imgproc::canny(
+//         filtered_image,
+//         &mut segmented_image,
+//         canny_threshold_low,
+//         canny_threshold_high,
+//         canny_aperture_size,
+//         canny_l2_gradient,
+//     )?;
 
-    // Morphology sequence:
-    // TODO: explain later jesjes
-    let mut morphed_image = segmented_image;
+//     // Morphology sequence:
+//     // TODO: explain later jesjes
+//     let mut morphed_image = segmented_image;
 
-    for morph_op in morph_sequence {
-        morphed_image = match *morph_op {
-            MorphOp::Open(iterations) => _morph_op_opening(&morphed_image, iterations)?,
-            MorphOp::Close(iterations) => _morph_op_closing(&morphed_image, iterations)?,
-        };
-    }
+//     for morph_op in morph_sequence {
+//         morphed_image = match *morph_op {
+//             MorphOp::Open(iterations) => _morph_op_opening(&morphed_image, iterations)?,
+//             MorphOp::Close(iterations) => _morph_op_closing(&morphed_image, iterations)?,
+//         };
+//     }
 
-    return Ok(morphed_image);
-}
+//     return Ok(morphed_image);
+// }
 
-// Morphological opening = erosion followed by dilation.
-// It is used first to remove small isolated foreground noise, tiny speckles,
-// and thin unwanted blobs while keeping larger candidate regions.
-fn _morph_op_opening(
-    segmented_image: &Mat,
-    opening_iterations: i32,
-) -> opencv::Result<Mat> {
-    let mut morphed_image = Mat::default();
+// // Morphological opening = erosion followed by dilation.
+// // It is used first to remove small isolated foreground noise, tiny speckles,
+// // and thin unwanted blobs while keeping larger candidate regions.
+// fn _morph_op_opening(
+//     segmented_image: &Mat,
+//     opening_iterations: i32,
+// ) -> opencv::Result<Mat> {
+//     let mut morphed_image = Mat::default();
 
-    // Small kernel removes isolated noise and tiny speckle blobs.
-    // More iterations gives stronger cleanup, but can also remove thin real objects.
-    let opening_kernel_size = 3;
+//     // Small kernel removes isolated noise and tiny speckle blobs.
+//     // More iterations gives stronger cleanup, but can also remove thin real objects.
+//     let opening_kernel_size = 3;
 
-    let opening_kernel = imgproc::get_structuring_element(
-        imgproc::MORPH_RECT,
-        Size::new(opening_kernel_size, opening_kernel_size),
-        Point::new(-1, -1),
-    )?;
+//     let opening_kernel = imgproc::get_structuring_element(
+//         imgproc::MORPH_RECT,
+//         Size::new(opening_kernel_size, opening_kernel_size),
+//         Point::new(-1, -1),
+//     )?;
 
-    imgproc::morphology_ex(
-        segmented_image,
-        &mut morphed_image,
-        imgproc::MORPH_OPEN,
-        &opening_kernel,
-        Point::new(-1, -1),
-        opening_iterations,
-        core::BORDER_CONSTANT,
-        imgproc::morphology_default_border_value()?,
-    )?;
+//     imgproc::morphology_ex(
+//         segmented_image,
+//         &mut morphed_image,
+//         imgproc::MORPH_OPEN,
+//         &opening_kernel,
+//         Point::new(-1, -1),
+//         opening_iterations,
+//         core::BORDER_CONSTANT,
+//         imgproc::morphology_default_border_value()?,
+//     )?;
 
-    return Ok(morphed_image);
-}
+//     return Ok(morphed_image);
+// }
 
-// Morphological closing = dilation followed by erosion.
-// It is used after opening to fill small holes inside candidate objects
-// and reconnect weak nearby fragments into more solid landmark regions.
-fn _morph_op_closing(
-    segmented_image: &Mat,
-    closing_iterations: i32,
-) -> opencv::Result<Mat> {
-    let mut morphed_image = Mat::default();
+// // Morphological closing = dilation followed by erosion.
+// // It is used after opening to fill small holes inside candidate objects
+// // and reconnect weak nearby fragments into more solid landmark regions.
+// fn _morph_op_closing(
+//     segmented_image: &Mat,
+//     closing_iterations: i32,
+// ) -> opencv::Result<Mat> {
+//     let mut morphed_image = Mat::default();
 
-    // Slightly larger kernel helps fill small holes and reconnect weak broken fragments.
-    // More iterations gives stronger merging, but can also merge nearby separate objects.
-    let closing_kernel_size = 5;
+//     // Slightly larger kernel helps fill small holes and reconnect weak broken fragments.
+//     // More iterations gives stronger merging, but can also merge nearby separate objects.
+//     let closing_kernel_size = 5;
 
-    let closing_kernel = imgproc::get_structuring_element(
-        imgproc::MORPH_RECT,
-        Size::new(closing_kernel_size, closing_kernel_size),
-        Point::new(-1, -1),
-    )?;
+//     let closing_kernel = imgproc::get_structuring_element(
+//         imgproc::MORPH_RECT,
+//         Size::new(closing_kernel_size, closing_kernel_size),
+//         Point::new(-1, -1),
+//     )?;
 
-    imgproc::morphology_ex(
-        segmented_image,
-        &mut morphed_image,
-        imgproc::MORPH_CLOSE,
-        &closing_kernel,
-        Point::new(-1, -1),
-        closing_iterations,
-        core::BORDER_CONSTANT,
-        imgproc::morphology_default_border_value()?,
-    )?;
+//     imgproc::morphology_ex(
+//         segmented_image,
+//         &mut morphed_image,
+//         imgproc::MORPH_CLOSE,
+//         &closing_kernel,
+//         Point::new(-1, -1),
+//         closing_iterations,
+//         core::BORDER_CONSTANT,
+//         imgproc::morphology_default_border_value()?,
+//     )?;
 
-    return Ok(morphed_image);
-}
+//     return Ok(morphed_image);
+// }
 
 
 
@@ -670,6 +723,316 @@ fn _morph_op_closing(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+fn _segment_objects_from_background(
+    filtered_image: &Mat,
+) -> opencv::Result<Mat> {
+    let local_window_size = 51;
+    let local_offset = 3.0;
+    let search_radius = 21;
+    let min_support = 120;
+
+
+    
+    let segmented_image_map_edge = _segmented_image_map_edge(filtered_image)?;
+
+    let semantic_image_shadow_with_map_edge = _semantic_threshold_candidates_local(
+        filtered_image,
+        local_window_size,
+        local_offset,
+        LocalThresholdOp::Shadow,
+    )?;
+    let semantic_image_bright_with_map_edge = _semantic_threshold_candidates_local(
+        filtered_image,
+        local_window_size,
+        local_offset,
+        LocalThresholdOp::Bright,
+    )?;
+
+    let semantic_image_shadow = _apply_mask_remove_pixels(
+        &semantic_image_shadow_with_map_edge,
+        &segmented_image_map_edge,
+    )?;
+    let semantic_image_bright = _apply_mask_remove_pixels(
+        &semantic_image_bright_with_map_edge,
+        &segmented_image_map_edge,
+    )?;
+
+    let semantic_image_filtered = _filter_semantics(
+        &semantic_image_shadow,
+        &semantic_image_bright,
+        search_radius,
+        min_support,
+    )?;
+
+    // Morphology sequence applied after filtering
+    // The sequence was selecting because it gives a pretty nice coverage of all objects
+    let morph_sequence = [
+        MorphOp::Open(1),
+        MorphOp::Dilate(2),
+        MorphOp::Erode(3),
+        MorphOp::Close(1),
+        MorphOp::Dilate(1),
+        MorphOp::Erode(1),
+        MorphOp::Close(2),
+    ];
+    let mut morphed_image = semantic_image_filtered;
+    for morph_op in &morph_sequence {
+        morphed_image = _morph_op(&morphed_image, *morph_op)?;
+    }
+
+    return Ok(morphed_image);
+}
+
+fn _segmented_image_map_edge(
+    filtered_image: &Mat,
+) -> opencv::Result<Mat> {
+    let mut segmented_image_map_edge = Mat::default();
+
+    // Otsu automatically finds a threshold that separates the darker
+    // background edge region from the brighter foreground content.
+    // THRESH_BINARY_INV keeps the darker map-edge/background as white.
+    imgproc::threshold(
+        filtered_image,
+        &mut segmented_image_map_edge,
+        0.0,
+        255.0,
+        imgproc::THRESH_BINARY_INV | imgproc::THRESH_OTSU,
+    )?;
+
+    // Morphology sequence applied after thresholding.
+    // 1. Open: To remove any speckles of noise
+    // 2. Close: To close any openings back up
+    // 3. Dilate: To grow the map edges to ensure we later on can take all of them out
+    // (Better to take more than less in this situation)
+    let morph_sequence = [
+        MorphOp::Open(1),
+        MorphOp::Close(1),
+        MorphOp::Dilate(10),
+    ];
+
+    let mut morphed_image = segmented_image_map_edge;
+
+    for morph_op in &morph_sequence {
+        morphed_image = _morph_op(&morphed_image, *morph_op)?;
+    }
+
+    return Ok(morphed_image);
+}
+
+fn _morph_op(
+    segmented_image: &Mat,
+    morph_op: MorphOp,
+) -> opencv::Result<Mat> {
+    let mut morphed_image = Mat::default();
+
+    // Pick OpenCV mode, kernel size, and iteration count
+    // from the enum variant the caller requested.
+    let (mode, kernel_size, iterations) = match morph_op {
+        MorphOp::Open(iterations) => (
+            imgproc::MORPH_OPEN,
+            5,
+            iterations,
+        ),
+        MorphOp::Close(iterations) => (
+            imgproc::MORPH_CLOSE,
+            15, // Note Bigger than normal to ensure proper closure
+            iterations,
+        ),
+        MorphOp::Dilate(iterations) => (
+            imgproc::MORPH_DILATE,
+            15, // Note Bigger than normal to ensure proper growth
+            iterations,
+        ),
+        MorphOp::Erode(iterations) => (
+            imgproc::MORPH_ERODE,
+            5,
+            iterations,
+        ),
+    };
+
+    // Build the kernel used by the selected operation.
+    // Small kernel = lighter effect, bigger kernel = more aggressive effect.
+    let kernel = imgproc::get_structuring_element(
+        imgproc::MORPH_RECT,
+        Size::new(kernel_size, kernel_size),
+        Point::new(-1, -1),
+    )?;
+
+    // Run the selected morphology operation.
+    // Open removes small noise, close fills gaps,
+    // dilate grows blobs, erode shrinks blobs.
+    imgproc::morphology_ex(
+        segmented_image,
+        &mut morphed_image,
+        mode,
+        &kernel,
+        Point::new(-1, -1),
+        iterations,
+        core::BORDER_CONSTANT,
+        imgproc::morphology_default_border_value()?,
+    )?;
+
+    return Ok(morphed_image);
+}
+
+fn _semantic_threshold_candidates_local(
+    filtered_image: &Mat,
+    window_size: i32,
+    offset: f64,
+    threshold_op: LocalThresholdOp,
+) -> opencv::Result<Mat> {
+    let mut local_mean = Mat::default();
+
+    // Local mean over a kernel around each pixel.
+    imgproc::blur(
+        filtered_image,
+        &mut local_mean,
+        Size::new(window_size, window_size),
+        Point::new(-1, -1),
+        core::BORDER_REPLICATE,
+    )?;
+
+    // Build the local threshold image.
+    // Bright uses mean + offset, shadow uses mean - offset.
+    let mut local_threshold = Mat::default();
+
+    match threshold_op {
+        LocalThresholdOp::Bright => {
+            core::add(
+                &local_mean,
+                &Scalar::all(offset),
+                &mut local_threshold,
+                &core::no_array(),
+                -1,
+            )?;
+        }
+        LocalThresholdOp::Shadow => {
+            core::subtract(
+                &local_mean,
+                &Scalar::all(offset),
+                &mut local_threshold,
+                &core::no_array(),
+                -1,
+            )?;
+        }
+    }
+
+    // Compare filtered image against the local threshold.
+    let compare_mode = match threshold_op {
+        LocalThresholdOp::Bright => core::CMP_GE,
+        LocalThresholdOp::Shadow => core::CMP_LE,
+    };
+
+    let mut candidate_mask = Mat::default();
+    core::compare(
+        filtered_image,
+        &local_threshold,
+        &mut candidate_mask,
+        compare_mode,
+    )?;
+
+    return Ok(candidate_mask);
+}
+
+fn _apply_mask_remove_pixels(
+    image: &Mat,
+    mask: &Mat,
+) -> opencv::Result<Mat> {
+    let mut masked_image = image.clone();
+
+    // Wherever mask == 255, set the image pixel to 0.
+    masked_image.set_to(&core::Scalar::all(0.0), mask)?;
+
+    return Ok(masked_image);
+}
+
+fn _filter_semantics(
+    semantic_image_shadow: &Mat,
+    semantic_image_bright: &Mat,
+    search_radius: i32,
+    min_support: i32,
+) -> opencv::Result<Mat> {
+    let mut shadow_bin = Mat::default();
+    let mut bright_bin = Mat::default();
+
+    imgproc::threshold(semantic_image_shadow, &mut shadow_bin, 0.0, 1.0, imgproc::THRESH_BINARY)?;
+    imgproc::threshold(semantic_image_bright, &mut bright_bin, 0.0, 1.0, imgproc::THRESH_BINARY)?;
+
+    let kernel_size = 2 * search_radius + 1;
+    let kernel = Mat::ones(kernel_size, kernel_size, core::CV_32F)?.to_mat()?;
+
+    let mut shadow_bin_f = Mat::default();
+    let mut bright_bin_f = Mat::default();
+    shadow_bin.convert_to(&mut shadow_bin_f, core::CV_32F, 1.0, 0.0)?;
+    bright_bin.convert_to(&mut bright_bin_f, core::CV_32F, 1.0, 0.0)?;
+
+    let mut shadow_support = Mat::default();
+    let mut bright_support = Mat::default();
+
+    imgproc::filter_2d(
+        &shadow_bin_f, &mut shadow_support, core::CV_32F, &kernel,
+        Point::new(-1, -1), 0.0, core::BORDER_CONSTANT,
+    )?;
+    imgproc::filter_2d(
+        &bright_bin_f, &mut bright_support, core::CV_32F, &kernel,
+        Point::new(-1, -1), 0.0, core::BORDER_CONSTANT,
+    )?;
+
+    let mut bright_keep = Mat::default();
+    let mut shadow_keep = Mat::default();
+    core::compare(&shadow_support, &Scalar::all(min_support as f64), &mut bright_keep, core::CMP_GE)?;
+    core::compare(&bright_support, &Scalar::all(min_support as f64), &mut shadow_keep, core::CMP_GE)?;
+
+    let mut bright_paired = Mat::default();
+    let mut shadow_paired = Mat::default();
+    core::bitwise_and(semantic_image_bright, &bright_keep, &mut bright_paired, &core::no_array())?;
+    core::bitwise_and(semantic_image_shadow, &shadow_keep, &mut shadow_paired, &core::no_array())?;
+
+    let mut semantic_image_filtered = Mat::default();
+    core::bitwise_or(&bright_paired, &shadow_paired, &mut semantic_image_filtered, &core::no_array())?;
+
+    Ok(semantic_image_filtered)
+}
 
 
 // Image Segmentation Functions (STOP) --------------------------------------------------
