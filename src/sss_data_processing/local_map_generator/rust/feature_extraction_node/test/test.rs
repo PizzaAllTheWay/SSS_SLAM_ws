@@ -165,6 +165,74 @@ impl LoggerSegmentedImage {
     }
 }
 
+pub struct LoggerLandmarkSet {
+    logger: Logger,
+}
+
+impl LoggerLandmarkSet {
+    pub fn new() -> Self {
+        Self {
+            logger: Logger::new(
+                "landmark_set",
+                &[
+                    "t",
+                    "label_id",
+                    "cx",
+                    "cy",
+                    "bbox_x",
+                    "bbox_y",
+                    "bbox_width",
+                    "bbox_height",
+                    "area",
+                    "z_r",
+                    "z_theta",
+                    "mask_width",
+                    "mask_height",
+                    "mask",
+                ],
+            ),
+        }
+    }
+
+    pub fn log(&mut self, t: f64, landmark_set: &LandmarkSet) -> opencv::Result<()> {
+        for (label_id, landmark) in &landmark_set.landmarks {
+            let mask = &landmark.bounding_box.mask;
+            let mask_width = mask.cols() as usize;
+            let mask_height = mask.rows() as usize;
+
+            let mask_bytes = mask.data_typed::<u8>()?;
+            let mask_str = mask_bytes
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            self.logger.writer.write_record(&[
+                t.to_string(),
+                label_id.to_string(),
+                landmark.centroid.cx.to_string(),
+                landmark.centroid.cy.to_string(),
+                landmark.bounding_box.x.to_string(),
+                landmark.bounding_box.y.to_string(),
+                landmark.bounding_box.width.to_string(),
+                landmark.bounding_box.height.to_string(),
+                landmark.d.weak.area.to_string(),
+                landmark.z.r.to_string(),
+                landmark.z.theta.to_string(),
+                mask_width.to_string(),
+                mask_height.to_string(),
+                mask_str,
+            ]).unwrap();
+        }
+
+        Ok(())
+    }
+
+    pub fn flush(&mut self) {
+        self.logger.flush();
+    }
+}
+
 
 
 // ======================================================
@@ -204,6 +272,7 @@ fn main() -> opencv::Result<()> {
 
     let mut logger_filtered_image = LoggerFilteredImage::new();
     let mut logger_segmented_image = LoggerSegmentedImage::new();
+    let mut logger_landmark_set = LoggerLandmarkSet::new();
 
     // Bilateral filter settings.
     // These parameters control how strongly the image is smoothed while still trying to preserve edges.
@@ -225,7 +294,7 @@ fn main() -> opencv::Result<()> {
     // In short:
     // larger values -> stronger smoothing, less noise, more detail loss, weaker edge preservation
     // smaller values -> weaker smoothing, more noise left, better detail and edge preservation
-    let filter_d: i32 = 31;
+    let filter_d: i32 = 31; // [pixel]
     let filter_sigma_color: f64 = 80.0;
     let filter_sigma_space: f64 = 100.0;
 
@@ -259,11 +328,21 @@ fn main() -> opencv::Result<()> {
     // larger `local_offset` -> stricter candidate detection
     // larger `search_radius` -> wider support search
     // larger `min_support` -> stricter semantic pruning
-    let local_window_size = 51;
+    let local_window_size = 51; // [pixel]
     let local_offset = 3.0;
-    let search_radius = 21;
-    let min_support = 100;
+    let search_radius = 21; // [pixel]
+    let min_support = 100; // [pixel]
 
+    // Minimum landmark area in pixels.
+    // This is a final size-based pruning step applied after segmentation and labeling.
+    //
+    // Even if the segmentation is mostly good, some small leftover blobs, speckles,
+    // or broken fragments can still survive and appear as separate labeled regions.
+    // This threshold removes those by requiring a landmark to contain at least this many pixels.
+    //
+    // Larger values make the pruning stricter and keep only bigger landmark regions.
+    // Smaller values keep more landmarks, but also allow more small noisy segments through.
+    let landmark_area_min = 5_000; // [pixel]
 
     let mut extractor = FeatureExtractor::new(
         filter_d,
@@ -274,6 +353,8 @@ fn main() -> opencv::Result<()> {
         local_offset,
         search_radius,
         min_support,
+
+        landmark_area_min,
     );
 
     // Timing stats
@@ -328,7 +409,7 @@ fn main() -> opencv::Result<()> {
 
         // Actual extraction, meat n taters
         let t_start = Instant::now();
-        extractor.extract_features_from_map(&map)?;
+        let landmark_set = extractor.extract_features_from_map(&map)?;
         let dt_extract_features_s = t_start.elapsed().as_secs_f64();
 
         total_extract_features_s += dt_extract_features_s;
@@ -341,10 +422,12 @@ fn main() -> opencv::Result<()> {
 
         logger_filtered_image.log(t, &map, filtered_image)?;
         logger_segmented_image.log(t, &map, segmented_image)?;
+        logger_landmark_set.log(t, &landmark_set)?;
     }
 
     logger_filtered_image.flush();
     logger_segmented_image.flush();
+    logger_landmark_set.flush();
 
     let avg_extract_features_s =
         if count_extract_features > 0 {

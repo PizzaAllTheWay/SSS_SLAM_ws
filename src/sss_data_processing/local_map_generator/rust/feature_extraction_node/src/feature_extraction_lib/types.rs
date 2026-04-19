@@ -1,3 +1,9 @@
+use std::collections::HashMap;
+use opencv::core::Mat;
+use nalgebra::Matrix2;
+
+
+
 pub struct Pose2DMap {
     // Position in pixels on the map
     pub x: i64, // [pixel]
@@ -41,7 +47,6 @@ impl Map {
     }
 }
 
-// Morphology operations used to shape binary masks.
 #[derive(Clone, Copy)]
 pub enum MorphOp {
     Dilate(i32), // Grow regions
@@ -50,10 +55,100 @@ pub enum MorphOp {
     Close(i32),  // Fill small gaps
 }
 
-// Local semantic threshold mode.
 #[derive(Clone, Copy)]
 pub enum LocalThresholdOp {
     Bright, // Pixel is brighter than local mean
     Shadow, // Pixel is darker than local mean
 }
 
+// Measurement from vehicle/map origin to landmark.
+#[derive(Debug, Clone, Default)]
+pub struct LandmarkMeasurement {
+    pub r: f64,     // Range [m]
+    pub theta: f64, // Bearing [rad]
+}
+
+// Strong descriptors are usually more distinctive and useful for matching.
+#[derive(Debug, Clone, Default)]
+pub struct LandmarkDescriptorsStrong {
+    pub mean_intensity: f64,
+    pub std: f64,
+    pub contrast: f64,
+    pub entropy: f64,
+}
+
+// Weak descriptors are simpler geometric/contextual properties.
+#[derive(Debug, Clone, Default)]
+pub struct LandmarkDescriptorsWeak {
+    pub area: i32,
+    pub polar_coordinates: LandmarkMeasurement,
+    pub radial_intensity_gradient: f64,
+}
+
+// Full descriptor bundle for one landmark.
+#[derive(Debug, Clone, Default)]
+pub struct LandmarkDescriptors {
+    pub strong: LandmarkDescriptorsStrong,
+    pub weak: LandmarkDescriptorsWeak,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Centroid {
+    pub cx: f64, // Centroid x [pixel]
+    pub cy: f64, // Centroid y [pixel]
+}
+
+// Bounding box around the landmark in image/map pixel coordinates.
+#[derive(Debug, Clone, Default)]
+pub struct BoundingBox {
+    pub x: i32,      // Left [pixel]
+    pub y: i32,      // Top [pixel]
+    pub width: i32,  // Width [pixel]
+    pub height: i32, // Height [pixel]
+
+    // Binary mask for just this landmark inside the bounding box region.
+    // Foreground = 255
+    // background = 0
+    pub mask: Mat,
+}
+
+// Full landmark object.
+//
+// Big picture:
+// - `z` is the measured landmark position relative to current vehicle/map origin
+// - `R_z` is the uncertainty of that measurement
+// - `d` stores descriptors for matching/classification later
+// - `centroid` stores the geometric center of the labeled landmark region in image coordinates.
+// - `bounding_box` stores where the landmark lives in the segmented image
+#[derive(Debug, Clone)]
+#[allow(non_snake_case)]
+pub struct Landmark {
+    pub z: LandmarkMeasurement,
+    pub R_z: Matrix2<f64>,
+    pub d: LandmarkDescriptors,
+
+    pub centroid: Centroid,
+    pub bounding_box: BoundingBox,
+}
+impl Default for Landmark {
+    fn default() -> Self {
+        Self {
+            z: Default::default(),
+            R_z: Matrix2::zeros(),
+            d: Default::default(),
+            centroid: Default::default(),
+            bounding_box: Default::default(),
+        }
+    }
+}
+impl Landmark {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+// Collection of landmarks indexed by label ID.
+#[derive(Debug, Clone, Default)]
+pub struct LandmarkSet {
+    pub landmarks: HashMap<i32, Landmark>, // Landmarks[ID, Landmark]
+}

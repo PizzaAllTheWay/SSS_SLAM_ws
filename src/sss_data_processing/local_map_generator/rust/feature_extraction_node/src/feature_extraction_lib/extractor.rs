@@ -7,6 +7,7 @@ use opencv::core::{
     Size,
     Point,
     Scalar,
+    Rect,
 };
 
 use super::types::*;
@@ -35,6 +36,11 @@ pub struct FeatureExtractor {
     search_radius: i32,
     min_support: i32,
 
+    // Landmark labelling parameters 
+    // Minimum allowed landmark area in pixels.
+    // Smaller landmarks are discarded as likely noise or tiny fragments.
+    landmark_area_min: i32,
+
     // Image after applying filter.
     filtered_image: Mat,
     // Image after segmenting background from objects
@@ -50,6 +56,8 @@ impl FeatureExtractor {
         local_offset: f64,
         search_radius: i32,
         min_support: i32,
+
+        landmark_area_min: i32,
     ) -> Self {
         // Diameter must be at least 1 for bilateral filtering.
         let filter_d = filter_d.max(1);
@@ -64,6 +72,8 @@ impl FeatureExtractor {
             search_radius,
             min_support,
 
+            landmark_area_min,
+
             filtered_image: Mat::default(),
             segmented_image: Mat::default(),
         }
@@ -73,7 +83,7 @@ impl FeatureExtractor {
     pub fn extract_features_from_map(
         &mut self,
         map: &Map,
-    ) -> opencv::Result<()> {
+    ) -> opencv::Result<LandmarkSet> {
         // Convert Map into image ----------
         // Convert the project map into an OpenCV image
         // so the later image processing steps can operate on it.
@@ -103,10 +113,14 @@ impl FeatureExtractor {
         )?;
 
         // Label objects ----------
-        // TODO: Make function for labeling, openCV should have stuff already for it
+        // Label the segmented connected components and convert them into the projects LandmarkSet structure.
+        let landmark_set = _label_segmented_objects(
+            &self.segmented_image,
+            self.landmark_area_min,
+        )?;
 
         // TODO: Return features jesjes
-        Ok(())
+        return Ok(landmark_set);
     }
 
     // Functions for debugging
@@ -568,3 +582,127 @@ fn _filter_semantics(
 }
 // Image Segmentation Functions (STOP) --------------------------------------------------
 
+
+
+// Labelling Functions (START) --------------------------------------------------
+// TODO: Explain better here
+fn _label_segmented_objects(
+    segmented_image: &Mat,
+    landmark_area_min: i32,
+) -> opencv::Result<LandmarkSet> {
+    let mut labels = Mat::default();
+    let mut stats = Mat::default();
+    let mut centroids = Mat::default();
+
+    let num_labels = imgproc::connected_components_with_stats(
+        segmented_image,
+        &mut labels,
+        &mut stats,
+        &mut centroids,
+        8,
+        core::CV_32S,
+    )?;
+
+    let mut landmark_set = _build_landmark_set_from_labels(
+        &labels,
+        &stats,
+        &centroids,
+        num_labels,
+    )?;
+
+    _prune_landmarks_by_area(
+        &mut landmark_set,
+        landmark_area_min
+    );
+
+    return Ok(landmark_set);
+}
+
+// Builds a LandmarkSet from the raw connected-components output returned by OpenCV.
+//
+// Big picture:
+// We loop over every labeled foreground component, read its geometry from `stats`,
+// read its center from `centroids`, extract its exact local mask from the `labels` image,
+// and then store all of that inside a `Landmark` in the final `LandmarkSet`.
+//
+// Important:
+// label 0 is always the background, so we skip it.
+fn _build_landmark_set_from_labels(
+    labels: &Mat,
+    stats: &Mat,
+    centroids: &Mat,
+    num_labels: i32,
+) -> opencv::Result<LandmarkSet> {
+    let mut landmark_set = LandmarkSet::default();
+
+    // Skip label 0 because OpenCV reserves it for background.
+    // Every other label corresponds to one connected foreground object.
+    for label_id in 1..num_labels {
+        // Read the bounding box and area for the current connected component.
+        // OpenCV stores these in the stats table, one row per label.
+        let x = *stats.at_2d::<i32>(label_id, imgproc::CC_STAT_LEFT)?;
+        let y = *stats.at_2d::<i32>(label_id, imgproc::CC_STAT_TOP)?;
+        let width = *stats.at_2d::<i32>(label_id, imgproc::CC_STAT_WIDTH)?;
+        let height = *stats.at_2d::<i32>(label_id, imgproc::CC_STAT_HEIGHT)?;
+        let area = *stats.at_2d::<i32>(label_id, imgproc::CC_STAT_AREA)?;
+
+        // Read the centroid of the current label.
+        // This is the geometric center of the labeled region in image coordinates.
+        let cx = *centroids.at_2d::<f64>(label_id, 0)?;
+        let cy = *centroids.at_2d::<f64>(label_id, 1)?;
+
+        // Extract the local ROI (Region Of Interest) from the full labels image using the bounding box.
+        // Then create an exact binary mask for only this label inside that ROI.
+        // Pixels belonging to this label become 255, everything else becomes 0.
+        let roi = Rect::new(x, y, width, height);
+        let labels_roi = labels.roi(roi)?;
+
+        let mut mask = Mat::default();
+        core::compare(
+            &labels_roi,
+            &Scalar::all(label_id as f64),
+            &mut mask,
+            core::CMP_EQ,
+        )?;
+
+        // Start with an empty landmark and then fill only what we already know.
+        // The remaining fields stay default/placeholder for now and can be filled later.
+        let mut landmark = Landmark::new();
+
+        landmark.d.weak.area = area;
+
+        landmark.centroid = Centroid {
+            cx,
+            cy,
+        };
+
+        landmark.bounding_box = BoundingBox {
+            x,
+            y,
+            width,
+            height,
+            mask,
+        };
+
+        // Save the finished landmark using the OpenCV label ID as the key.
+        landmark_set.landmarks.insert(label_id, landmark);
+    }
+
+    return Ok(landmark_set);
+}
+
+// Removes landmarks whose labeled area is smaller than the requested minimum.
+//
+// Big picture:
+// Very small connected components are often just leftover noise or tiny fragments.
+// This step keeps only landmarks large enough to be worth treating as real candidates.
+fn _prune_landmarks_by_area(
+    landmark_set: &mut LandmarkSet,
+    min_area: i32,
+) {
+    // Keep only landmarks whose connected-component area passes the threshold.
+    landmark_set
+        .landmarks
+        .retain(|_, landmark| landmark.d.weak.area >= min_area);
+}
+// Labelling Functions (STOP) --------------------------------------------------
