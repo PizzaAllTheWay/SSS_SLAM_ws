@@ -578,7 +578,141 @@ def plot_landmark_measurements(filtered_df, landmark_df, title="Landmark Measure
 
 
 
-# PLOT FOR Descriptors ----------
+# PLOT FOR Estimated Height ----------
+def _draw_landmark_bbox_m(ax, row, resolution, linewidth=1.6):
+    x = int(row["bbox_x"])
+    y = int(row["bbox_y"])
+    width = int(row["bbox_width"])
+    height = int(row["bbox_height"])
+
+    color = _random_color_from_id(int(row["label_id"]))
+
+    rect = patches.Rectangle(
+        (x * resolution, y * resolution),
+        width * resolution,
+        height * resolution,
+        linewidth=linewidth,
+        edgecolor=color,
+        facecolor=(color[0], color[1], color[2], 0.08),
+    )
+    ax.add_patch(rect)
+
+def _draw_landmark_id_and_height_m(ax, row, resolution):
+    label_id = int(row["label_id"])
+    x_m = float(row["bbox_x"]) * resolution
+    y_m = float(row["bbox_y"]) * resolution
+
+    height_txt = "nan"
+    if "height" in row and pd.notna(row["height"]):
+        height_txt = f"{float(row['height']):.2f} m"
+
+    color = _random_color_from_id(label_id)
+
+    ax.text(
+        x_m,
+        max(y_m - 0.35 * resolution, 0.0),
+        f"ID {label_id}, h={height_txt}",
+        color=color,
+        fontsize=8,
+        ha="left",
+        va="bottom",
+        bbox=dict(
+            facecolor=(1, 1, 1, 0.70),
+            edgecolor="none",
+            pad=1.5,
+        ),
+    )
+
+def plot_landmark_height(filtered_df, landmark_df, title="Estimated Landmark Height"):
+    if len(filtered_df) == 0:
+        raise ValueError("No filtered image samples to plot")
+    if len(landmark_df) == 0:
+        raise ValueError("No landmark samples to plot")
+
+    filtered_df = filtered_df.reset_index(drop=True)
+
+    landmark_groups = {
+        float(t): group.reset_index(drop=True)
+        for t, group in landmark_df.groupby("t", sort=True)
+    }
+
+    valid_indices = []
+    for i in range(len(filtered_df)):
+        t = float(filtered_df.iloc[i]["t"])
+        if t in landmark_groups:
+            valid_indices.append(i)
+
+    if len(valid_indices) == 0:
+        raise ValueError("No matching timestamps between filtered image csv and landmark csv")
+
+    idx0 = 0
+
+    cmap_img = cm.get_cmap("copper").copy()
+    cmap_img.set_bad(color="white")
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+    plt.subplots_adjust(bottom=0.16)
+
+    def draw_sample(sample_idx):
+        ax.clear()
+
+        df_idx = valid_indices[sample_idx]
+        filtered_row = filtered_df.iloc[df_idx]
+        t = float(filtered_row["t"])
+        landmark_rows = landmark_groups[t]
+
+        filtered_image = get_processed_image_from_row(filtered_row)
+        resolution = float(filtered_row["resolution"])
+        extent_m = _image_extent_m(filtered_row)
+
+        valid = filtered_image[filtered_image != 0]
+        vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
+        vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
+
+        ax.imshow(
+            _masked(filtered_image),
+            cmap=cmap_img,
+            interpolation="nearest",
+            vmin=vmin,
+            vmax=vmax,
+            extent=extent_m,
+        )
+
+        for _, row in landmark_rows.iterrows():
+            _draw_landmark_mask_m(ax, row, resolution, alpha=0.35)
+            _draw_landmark_bbox_m(ax, row, resolution)
+            _draw_landmark_centroid_m(ax, row, resolution)
+            _draw_landmark_id_and_height_m(ax, row, resolution)
+
+        ax.set_title("Estimated Landmark Height")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_aspect("equal")
+
+        fig.suptitle(title)
+
+    draw_sample(idx0)
+
+    slider_ax = fig.add_axes([0.15, 0.06, 0.7, 0.04])
+    slider = Slider(
+        ax=slider_ax,
+        label="Sample",
+        valmin=0,
+        valmax=len(valid_indices) - 1,
+        valinit=idx0,
+        valstep=1,
+    )
+
+    def update(val):
+        idx = int(slider.val)
+        draw_sample(idx)
+        fig.canvas.draw_idle()
+
+    slider.on_changed(update)
+    plt.show()
+
+
+
 # PLOT FOR Descriptors ----------
 def _get_descriptor_columns(df):
     cols = [
@@ -589,6 +723,7 @@ def _get_descriptor_columns(df):
         "area",
         "weak_polar_r",
         "weak_polar_theta",
+        "height",
         "radial_intensity_gradient",
     ]
     return [c for c in cols if c in df.columns]

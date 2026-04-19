@@ -82,6 +82,7 @@ pub struct LandmarkDescriptorsStrong {
 pub struct LandmarkDescriptorsWeak {
     pub area: i32,
     pub polar_coordinates: LandmarkMeasurement,
+    pub height: f64,
     pub radial_intensity_gradient: f64,
 }
 
@@ -129,6 +130,8 @@ pub struct Landmark {
 
     pub centroid: Centroid,
     pub bounding_box: BoundingBox,
+
+    pub estimated_height: f64,
 }
 impl Default for Landmark {
     fn default() -> Self {
@@ -138,6 +141,7 @@ impl Default for Landmark {
             d: Default::default(),
             centroid: Default::default(),
             bounding_box: Default::default(),
+            estimated_height: 0.0,
         }
     }
 }

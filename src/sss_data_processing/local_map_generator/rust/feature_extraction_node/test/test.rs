@@ -190,6 +190,7 @@ impl LoggerLandmarkSet {
                     "R_z_rtheta",
                     "R_z_thetar",
                     "R_z_thetatheta",
+                    "estimated_height",
                     "mean_intensity",
                     "std",
                     "contrast",
@@ -197,6 +198,7 @@ impl LoggerLandmarkSet {
                     "area",
                     "weak_polar_r",
                     "weak_polar_theta",
+                    "height",
                     "radial_intensity_gradient",
                     "mask_width",
                     "mask_height",
@@ -234,6 +236,7 @@ impl LoggerLandmarkSet {
                 landmark.R_z[(0, 1)].to_string(),
                 landmark.R_z[(1, 0)].to_string(),
                 landmark.R_z[(1, 1)].to_string(),
+                landmark.estimated_height.to_string(),
                 landmark.d.strong.mean_intensity.to_string(),
                 landmark.d.strong.std.to_string(),
                 landmark.d.strong.contrast.to_string(),
@@ -241,6 +244,7 @@ impl LoggerLandmarkSet {
                 landmark.d.weak.area.to_string(),
                 landmark.d.weak.polar_coordinates.r.to_string(),
                 landmark.d.weak.polar_coordinates.theta.to_string(),
+                landmark.d.weak.height.to_string(),
                 landmark.d.weak.radial_intensity_gradient.to_string(),
                 mask_width.to_string(),
                 mask_height.to_string(),
@@ -277,6 +281,52 @@ fn reshape_flat_u8_to_2d(data: Vec<u8>, width: usize, height: usize) -> Vec<Vec<
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct AltitudeSample {
+    t: f64,
+    z: f64,
+}
+
+fn load_altitude_csv(path: &str) -> Vec<AltitudeSample> {
+    let file = BufReader::new(File::open(path).unwrap());
+
+    file.lines()
+        .skip(1) // skip header if there is one
+        .filter_map(|line| {
+            let line = line.ok()?;
+            let parts: Vec<&str> = line.split(',').collect();
+
+            if parts.len() < 2 {
+                return None;
+            }
+
+            Some(AltitudeSample {
+                t: parts[0].parse().ok()?,
+                z: parts[1].parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+fn get_closest_altitude(
+    altitude_samples: &[AltitudeSample],
+    altitude_idx: &mut usize,
+    t: f64,
+) -> Option<f64> {
+    if altitude_samples.is_empty() {
+        return None;
+    }
+
+    while *altitude_idx + 1 < altitude_samples.len()
+        && (altitude_samples[*altitude_idx + 1].t - t).abs()
+            <= (altitude_samples[*altitude_idx].t - t).abs()
+    {
+        *altitude_idx += 1;
+    }
+
+    Some(altitude_samples[*altitude_idx].z)
+}
+
 
 
 // ======================================================
@@ -289,6 +339,9 @@ fn main() -> opencv::Result<()> {
 
     let map_file = BufReader::new(File::open("test/data/map.csv").unwrap());
     let origin_file = BufReader::new(File::open("test/data/map_origin.csv").unwrap());
+    
+    let altitude_samples = load_altitude_csv("test/data/altitude.csv");
+    let mut altitude_idx: usize = 0;
 
     let mut map_iter = map_file.lines().skip(start_n);
     let mut origin_iter = origin_file.lines().skip(start_n);
@@ -352,7 +405,7 @@ fn main() -> opencv::Result<()> {
     // larger `search_radius` -> wider support search
     // larger `min_support` -> stricter semantic pruning
     let local_window_size = 51; // [pixel]
-    let local_offset = 3.0;
+    let local_offset = 3.3;
     let search_radius = 21; // [pixel]
     let min_support = 100; // [pixel]
 
@@ -470,9 +523,17 @@ fn main() -> opencv::Result<()> {
             data: map_data,
         };
 
+        let altitude = match get_closest_altitude(&altitude_samples, &mut altitude_idx, t) {
+            Some(z) => z,
+            None => panic!("No altitude samples available"),
+        };
+
         // Actual extraction, meat n taters
         let t_start = Instant::now();
-        let landmark_set = extractor.extract_features_from_map(&map)?;
+        let landmark_set = extractor.extract_features_from_map(
+            &map,
+            altitude,
+        )?;
         let dt_extract_features_s = t_start.elapsed().as_secs_f64();
 
         total_extract_features_s += dt_extract_features_s;

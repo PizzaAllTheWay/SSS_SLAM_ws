@@ -57,7 +57,7 @@ pub struct FeatureExtractor {
     // ? should be made fully consistent so this extra offset is no longer needed.
     map_offset_yaw: f64,
 
-    // Image after applying filter.
+    // Image after applying filter
     filtered_image: Mat,
     // Image after segmenting background from objects
     segmented_image: Mat,
@@ -113,6 +113,7 @@ impl FeatureExtractor {
     pub fn extract_features_from_map(
         &mut self,
         map: &Map,
+        altitude: f64,
     ) -> opencv::Result<LandmarkSet> {
         // Convert Map into image ----------
         // Convert the project map into an OpenCV image
@@ -162,7 +163,17 @@ impl FeatureExtractor {
             self.map_offset_yaw,
         );
 
+        // Estimate Landmark Height ----------
+        // TODO: Short explanation
+        _estimate_landmark_height(
+            &map,
+            &self.filtered_image,
+            &mut landmark_set,
+            altitude,
+        );
+
         // Landmark Descriptor ----------
+        // TODO: Short explanation
         _update_landmark_descriptors(
             &input_image,
             &mut landmark_set,
@@ -901,6 +912,245 @@ fn _calculate_landmark_measurement_uncertainty(
 
 
 
+// Height Estimation Functions (START) --------------------------------------------------
+// TODO:
+// !!! Also clean up functions here
+
+
+
+// TODO: Explain functions jesjes
+fn _estimate_landmark_height(
+    map: &Map,
+    filtered_image: &Mat,
+    landmark_set: &mut LandmarkSet,
+    altitude: f64,
+) {
+    for landmark in landmark_set.landmarks.values_mut() {
+        let estimated_shadow_length = _estimate_landmark_shadow_length(
+            filtered_image,
+            landmark,
+            map.resolution,
+        );
+
+        // TODO:
+        // let estimated_height = _calculate_landmark_height(
+        //     estimated_shadow_length,
+        //     altitude,
+        // );
+
+        //landmark.estimated_height = estimated_height;
+        // TODO
+        // ! TESTING REMOVE LATER
+        //landmark.estimated_height = estimated_shadow_length;
+        landmark.estimated_height = estimated_shadow_length;
+    }
+}
+
+fn _estimate_landmark_shadow_length(
+    filtered_image: &Mat,
+    landmark: &mut Landmark,
+    resolution: f64,
+) -> f64 {
+    // TODO: Explain later no time now
+    let roi = Rect::new(
+        landmark.bounding_box.x,
+        landmark.bounding_box.y,
+        landmark.bounding_box.width,
+        landmark.bounding_box.height,
+    );
+    let image_roi = match filtered_image.roi(roi) {
+        Ok(image_roi) => image_roi,
+        Err(_) => return 0.0
+    };
+    
+    let mut I_min = 0.0;
+    let mut I_max = 0.0;
+
+    if core::min_max_loc(
+        &image_roi,
+        Some(&mut I_min),
+        Some(&mut I_max),
+        None,
+        None,
+        &landmark.bounding_box.mask,
+    ).is_err() {
+        return 0.0;
+    }
+
+    if I_max <= I_min {
+        return 0.0;
+    }
+
+    // TODO TUne thsi boi
+    let threshold_bias = -5.0; // tune: 3.0, 5.0, 8.0, 10.0
+    let otsu_threshold = (0.5 * (I_min + I_max) + threshold_bias).max(0.0);
+
+
+    // !!!! DEbugg
+    // TODO: REMOVE
+    println!("threshold: {:.3}", otsu_threshold);
+
+    // We now apply that locally estimated threshold to the whole filtered image.
+    // This gives a global dark-region mask, but tuned using the landmark local ROI.
+    // Dark pixels become foreground so possible shadow blobs are easy to label.
+    let mut shadow_mask = Mat::default();
+    if imgproc::threshold(
+        filtered_image,
+        &mut shadow_mask,
+        otsu_threshold,
+        255.0,
+        imgproc::THRESH_BINARY_INV,
+    ).is_err() {
+        return 0.0;
+    }
+
+    // Next we label all connected dark regions in the thresholded full image.
+    // Each labeled component becomes a shadow candidate that we can compare
+    // against the current landmark using area and centroid distance.
+    // Label based on 8-connectivity: 
+    // pixels are connected if they share either an edge or a corner 
+    // (includes diagonals)
+    let mut labels = Mat::default();
+    let mut stats = Mat::default();
+    let mut centroids = Mat::default();
+    let connectivity = 8; 
+    
+    let n_labels = match imgproc::connected_components_with_stats(
+        &shadow_mask,
+        &mut labels,
+        &mut stats,
+        &mut centroids,
+        connectivity,
+        core::CV_32S,
+    ) {
+        Ok(n) => n,
+        Err(_) => return 0.0,
+    };
+
+    // We prune away tiny dark blobs because those are usually just noise,
+    // speckle, or weak texture dips instead of a meaningful landmark shadow.
+    // Here we require the shadow candidate to be at least some fraction
+    // of the landmark segmented area. In addition if the shadow exceeds a certain
+    // area proportion of landmark, that means it cant be landmarks shadow and is also pruned
+    // TODO: TUNE THIS 
+    // 0.33
+    // 0.03 works fine
+    let shadow_area_min_ratio = 0.03; // !!!! TUNE
+    let shadow_area_max_ratio = 1.50; // !!!! TUNE
+    let landmark_area = landmark.d.weak.area as f64;
+    let shadow_area_min = shadow_area_min_ratio * landmark_area;
+    let shadow_area_max = shadow_area_max_ratio * landmark_area;
+
+    let landmark_cx = landmark.centroid.cx;
+    let landmark_cy = landmark.centroid.cy;
+
+    // Among all valid dark regions, choose the one whose centroid is closest
+    // to the landmark centroid. This is a simple and usually robust heuristic
+    // for picking the shadow that belongs to the landmark.
+    let mut best_label = -1;
+    let mut best_dist_sq = f64::INFINITY;
+
+    for label in 1..n_labels {
+        let area = match stats.at_2d::<i32>(label, imgproc::CC_STAT_AREA) {
+            Ok(v) => *v as f64,
+            Err(_) => continue,
+        };
+
+        if area < shadow_area_min {
+            continue;
+        }
+        if area > shadow_area_max {
+            continue;
+        }
+
+        let shadow_cx = match centroids.at_2d::<f64>(label, 0) {
+            Ok(v) => *v,
+            Err(_) => continue,
+        };
+        let shadow_cy = match centroids.at_2d::<f64>(label, 1) {
+            Ok(v) => *v,
+            Err(_) => continue,
+        };
+
+        let dx = shadow_cx - landmark_cx;
+        let dy = shadow_cy - landmark_cy;
+        let dist_sq = dx*dx + dy*dy;
+
+        if dist_sq < best_dist_sq {
+            best_dist_sq = dist_sq;
+            best_label = label;
+        }
+    }
+
+    if best_label < 0 {
+        return 0.0;
+    }
+
+    // After selecting the most likely shadow component, we scan all pixels
+    // that belong to that component and measure their distance from the
+    // landmark centroid. The nearest and farthest shadow points define
+    // the shadow extent along the image plane.
+    let mut min_dist = f64::INFINITY;
+    let mut max_dist = 0.0;
+
+    for y in 0..labels.rows() {
+        for x in 0..labels.cols() {
+            let label = match labels.at_2d::<i32>(y, x) {
+                Ok(v) => *v,
+                Err(_) => continue,
+            };
+
+            if label != best_label {
+                continue;
+            }
+
+            let dx = x as f64 - landmark_cx;
+            let dy = y as f64 - landmark_cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            if dist < min_dist {
+                min_dist = dist;
+            }
+
+            if dist > max_dist {
+                max_dist = dist;
+            }
+        }
+    }
+
+    // The estimated shadow length is taken as the spread of the chosen shadow
+    // region measured from the landmark centroid directionally outward.
+    // If the component degenerates or becomes invalid, return zero safely.
+    if !min_dist.is_finite() || max_dist <= min_dist {
+        return 0.0;
+    }
+
+    let estimated_shadow_length_pixels = max_dist - min_dist;
+    let estimated_shadow_length = estimated_shadow_length_pixels * resolution;
+
+    return estimated_shadow_length;
+}
+
+// TODO: Explain that thsi is a extremely iffy shit
+// Liek teh stimate here asumes flat gorund AND that flat-ground similar-triangles approximation
+// WIthsc in reality its not but it is an estimate at least
+fn _calculate_landmark_height(
+    estimated_shadow_length: f64,
+    altitude: f64,
+) -> f64 {
+    if altitude <= 0.0 || estimated_shadow_length <= 0.0 {
+        return 0.0;
+    }
+
+    let estimated_height = altitude * estimated_shadow_length
+        / (altitude + estimated_shadow_length);
+
+    return estimated_height;
+}
+// Height Estimation Functions (STOP) --------------------------------------------------
+
+
+
 // Landmark Descriptor Functions (START) --------------------------------------------------
 // TODO: Explain functions
 fn _update_landmark_descriptors(
@@ -1111,6 +1361,7 @@ fn _get_landmark_descriptors_weak(
     // Calculate descriptors
     // area = Already calculated from labelling step, so we good :)
     // polar_coordinates = Also already calculated from measurement step, noice 0o0
+    // height = Already have from estimate landmark height step, so it is very nice \(*-*)/
     let radial_intensity_gradient = _get_landmark_descriptor_gradient(
         &image_roi,
         &landmark.bounding_box,
@@ -1121,6 +1372,7 @@ fn _get_landmark_descriptors_weak(
     let d = LandmarkDescriptorsWeak {
         area: landmark.d.weak.area,
         polar_coordinates: landmark.z,
+        height: landmark.estimated_height,
         radial_intensity_gradient,
     };
 
