@@ -769,10 +769,10 @@ fn _segment_objects_from_background(
     let local_window_size = 51;
     let local_offset = 3.0;
     let search_radius = 21;
-    let min_support = 120;
+    let min_support = 100;
 
 
-    
+
     let segmented_image_map_edge = _segmented_image_map_edge(filtered_image)?;
 
     let semantic_image_shadow_with_map_edge = _semantic_threshold_candidates_local(
@@ -808,12 +808,10 @@ fn _segment_objects_from_background(
     // The sequence was selecting because it gives a pretty nice coverage of all objects
     let morph_sequence = [
         MorphOp::Open(1),
-        MorphOp::Dilate(2),
-        MorphOp::Erode(3),
-        MorphOp::Close(1),
         MorphOp::Dilate(1),
         MorphOp::Erode(1),
-        MorphOp::Close(2),
+        MorphOp::Dilate(1),
+        MorphOp::Open(2),
     ];
     let mut morphed_image = semantic_image_filtered;
     for morph_op in &morph_sequence {
