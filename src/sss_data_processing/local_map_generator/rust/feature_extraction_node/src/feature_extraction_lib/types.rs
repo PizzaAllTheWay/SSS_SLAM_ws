@@ -41,18 +41,19 @@ impl Map {
     }
 }
 
-// TODO: Explain what thsi is for later
+// Morphology operations used to shape binary masks.
 #[derive(Clone, Copy)]
 pub enum MorphOp {
-    Dilate(i32),
-    Erode(i32),
-    Open(i32),
-    Close(i32),
+    Dilate(i32), // Grow regions
+    Erode(i32),  // Shrink regions
+    Open(i32),   // Remove small noise
+    Close(i32),  // Fill small gaps
 }
 
+// Local semantic threshold mode.
 #[derive(Clone, Copy)]
 pub enum LocalThresholdOp {
-    Bright,
-    Shadow,
+    Bright, // Pixel is brighter than local mean
+    Shadow, // Pixel is darker than local mean
 }
 
