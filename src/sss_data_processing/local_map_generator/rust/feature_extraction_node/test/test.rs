@@ -184,13 +184,20 @@ impl LoggerLandmarkSet {
                     "bbox_y",
                     "bbox_width",
                     "bbox_height",
-                    "area",
                     "z_r",
                     "z_theta",
                     "R_z_rr",
                     "R_z_rtheta",
                     "R_z_thetar",
                     "R_z_thetatheta",
+                    "mean_intensity",
+                    "std",
+                    "contrast",
+                    "entropy",
+                    "area",
+                    "weak_polar_r",
+                    "weak_polar_theta",
+                    "radial_intensity_gradient",
                     "mask_width",
                     "mask_height",
                     "mask",
@@ -221,13 +228,20 @@ impl LoggerLandmarkSet {
                 landmark.bounding_box.y.to_string(),
                 landmark.bounding_box.width.to_string(),
                 landmark.bounding_box.height.to_string(),
-                landmark.d.weak.area.to_string(),
                 landmark.z.r.to_string(),
                 landmark.z.theta.to_string(),
                 landmark.R_z[(0, 0)].to_string(),
                 landmark.R_z[(0, 1)].to_string(),
                 landmark.R_z[(1, 0)].to_string(),
                 landmark.R_z[(1, 1)].to_string(),
+                landmark.d.strong.mean_intensity.to_string(),
+                landmark.d.strong.std.to_string(),
+                landmark.d.strong.contrast.to_string(),
+                landmark.d.strong.entropy.to_string(),
+                landmark.d.weak.area.to_string(),
+                landmark.d.weak.polar_coordinates.r.to_string(),
+                landmark.d.weak.polar_coordinates.theta.to_string(),
+                landmark.d.weak.radial_intensity_gradient.to_string(),
                 mask_width.to_string(),
                 mask_height.to_string(),
                 mask_str,
@@ -373,10 +387,8 @@ fn main() -> opencv::Result<()> {
     // `alpha_theta` controls how strongly bearing uncertainty increases with distance.
     // Larger values make far landmarks much less certain in angle.
     // Smaller values keep bearing uncertainty more constant over distance.
-    // TODO: TUNE THESE
-    // !!! TUNE THESE
-    let sigma_r = 0.03;     // [m]
-    let sigma_theta = 0.01; // [rad]
+    let sigma_r = 0.030;     // [m]
+    let sigma_theta = 0.007; // [rad]
     let alpha_r = 0.025;
     let alpha_theta = 0.005;
 

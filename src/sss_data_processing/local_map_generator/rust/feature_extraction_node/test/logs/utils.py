@@ -575,3 +575,270 @@ def plot_landmark_measurements(filtered_df, landmark_df, title="Landmark Measure
 
     slider.on_changed(update)
     plt.show()
+
+
+
+# PLOT FOR Descriptors ----------
+# PLOT FOR Descriptors ----------
+def _get_descriptor_columns(df):
+    cols = [
+        "mean_intensity",
+        "std",
+        "contrast",
+        "entropy",
+        "area",
+        "weak_polar_r",
+        "weak_polar_theta",
+        "radial_intensity_gradient",
+    ]
+    return [c for c in cols if c in df.columns]
+
+def _get_descriptor_matrix(df, descriptor_cols):
+    X = df[descriptor_cols].copy().astype(float)
+
+    # Drop columns that are fully constant or invalid for this sample.
+    keep_cols = []
+    for c in descriptor_cols:
+        values = X[c].to_numpy(dtype=float)
+        if np.all(np.isfinite(values)) and np.nanstd(values) > 0.0:
+            keep_cols.append(c)
+
+    if len(keep_cols) == 0:
+        return np.zeros((len(df), 2)), []
+
+    X = X[keep_cols].to_numpy(dtype=float)
+
+    # Standardize so one large-scale descriptor does not dominate.
+    mu = np.mean(X, axis=0)
+    sigma = np.std(X, axis=0)
+    sigma[sigma == 0.0] = 1.0
+    Xn = (X - mu) / sigma
+
+    return Xn, keep_cols
+
+def _project_descriptors_pca_2d(X):
+    if X.shape[0] == 0:
+        return np.zeros((0, 2)), np.array([0.0, 0.0])
+
+    if X.shape[0] == 1:
+        return np.column_stack([np.zeros(1), np.zeros(1)]), np.array([1.0, 0.0])
+
+    if X.shape[1] == 1:
+        return np.column_stack([X[:, 0], np.zeros(X.shape[0])]), np.array([1.0, 0.0])
+
+    Xc = X - np.mean(X, axis=0, keepdims=True)
+    U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+    coords = Xc @ Vt[:2].T
+
+    var = (S ** 2) / max(X.shape[0] - 1, 1)
+    if len(var) == 1:
+        explained = np.array([1.0, 0.0])
+    else:
+        total = np.sum(var)
+        explained = np.array([
+            var[0] / total if total > 0 else 0.0,
+            var[1] / total if len(var) > 1 and total > 0 else 0.0,
+        ])
+
+    return coords, explained
+
+def _compute_descriptor_uniqueness(coords):
+    n = coords.shape[0]
+    if n == 0:
+        return np.array([])
+
+    if n == 1:
+        return np.array([0.0])
+
+    dists = np.sqrt(np.sum((coords[:, None, :] - coords[None, :, :]) ** 2, axis=2))
+    np.fill_diagonal(dists, np.inf)
+
+    # Nearest-neighbor distance = simple uniqueness score.
+    score = np.min(dists, axis=1)
+
+    max_score = np.max(score)
+    if max_score > 0:
+        score = score / max_score
+
+    return score
+
+def _draw_landmark_id_m(ax, row, resolution):
+    label_id = int(row["label_id"])
+    cx_m, cy_m = _pixel_to_meter_xy(
+        float(row["cx"]),
+        float(row["cy"]),
+        resolution,
+    )
+
+    ax.text(
+        cx_m + 0.25 * resolution,
+        cy_m - 0.25 * resolution,
+        f"ID {label_id}",
+        color="black",
+        fontsize=8,
+        ha="left",
+        va="bottom",
+        bbox=dict(
+            facecolor=(1, 1, 1, 0.65),
+            edgecolor="none",
+            pad=1.5,
+        ),
+    )
+
+def _draw_descriptor_space(ax, landmark_rows):
+    descriptor_cols = _get_descriptor_columns(landmark_rows)
+    X, used_cols = _get_descriptor_matrix(landmark_rows, descriptor_cols)
+
+    if X.shape[0] == 0 or len(used_cols) == 0:
+        ax.text(0.5, 0.5, "No valid descriptor data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title("Descriptor Space")
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        return
+
+    coords, explained = _project_descriptors_pca_2d(X)
+    uniqueness = _compute_descriptor_uniqueness(coords)
+
+    for i, (_, row) in enumerate(landmark_rows.iterrows()):
+        label_id = int(row["label_id"])
+        color = _random_color_from_id(label_id)
+
+        ax.scatter(
+            coords[i, 0],
+            coords[i, 1],
+            s=70 + 180 * uniqueness[i],
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            alpha=0.85,
+        )
+
+        ax.text(
+            coords[i, 0],
+            coords[i, 1],
+            f" {label_id}",
+            fontsize=9,
+            color="black",
+            ha="left",
+            va="center",
+        )
+
+    ax.set_title("Principal Component Analysis of Landmark Descriptor Space")
+    ax.set_xlabel(f"PC1 ({100.0 * explained[0]:.1f}% var)")
+    ax.set_ylabel(f"PC2 ({100.0 * explained[1]:.1f}% var)")
+    ax.grid(True, alpha=0.25)
+
+    if coords.shape[0] > 1:
+        xpad = 0.15 * max(np.ptp(coords[:, 0]), 1.0)
+        ypad = 0.15 * max(np.ptp(coords[:, 1]), 1.0)
+        ax.set_xlim(np.min(coords[:, 0]) - xpad, np.max(coords[:, 0]) + xpad)
+        ax.set_ylim(np.min(coords[:, 1]) - ypad, np.max(coords[:, 1]) + ypad)
+
+    # Small helper text so you know what this plot means.
+    used_txt = ", ".join(used_cols)
+    ax.text(
+        0.02,
+        0.98,
+        "Distance in this space = descriptor difference\n"
+        "Bigger marker = more unique vs nearest landmark\n"
+        f"Used: {used_txt}",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        bbox=dict(facecolor=(1, 1, 1, 0.75), edgecolor="none", pad=2.0),
+    )
+
+def plot_landmark_descriptors(filtered_df, landmark_df, title="Landmark Descriptors"):
+    if len(filtered_df) == 0:
+        raise ValueError("No filtered image samples to plot")
+    if len(landmark_df) == 0:
+        raise ValueError("No landmark samples to plot")
+
+    filtered_df = filtered_df.reset_index(drop=True)
+
+    landmark_groups = {
+        float(t): group.reset_index(drop=True)
+        for t, group in landmark_df.groupby("t", sort=True)
+    }
+
+    valid_indices = []
+    for i in range(len(filtered_df)):
+        t = float(filtered_df.iloc[i]["t"])
+        if t in landmark_groups:
+            valid_indices.append(i)
+
+    if len(valid_indices) == 0:
+        raise ValueError("No matching timestamps between filtered image csv and landmark csv")
+
+    idx0 = 0
+
+    cmap_img = cm.get_cmap("copper").copy()
+    cmap_img.set_bad(color="white")
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    plt.subplots_adjust(bottom=0.16, wspace=0.22)
+
+    ax_left, ax_right = axes
+
+    def draw_sample(sample_idx):
+        ax_left.clear()
+        ax_right.clear()
+
+        df_idx = valid_indices[sample_idx]
+        filtered_row = filtered_df.iloc[df_idx]
+        t = float(filtered_row["t"])
+        landmark_rows = landmark_groups[t]
+
+        filtered_image = get_processed_image_from_row(filtered_row)
+        resolution = float(filtered_row["resolution"])
+        extent_m = _image_extent_m(filtered_row)
+
+        valid = filtered_image[filtered_image != 0]
+        vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
+        vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
+
+        # Left: filtered image + landmark masks + ID text.
+        ax_left.imshow(
+            _masked(filtered_image),
+            cmap=cmap_img,
+            interpolation="nearest",
+            vmin=vmin,
+            vmax=vmax,
+            extent=extent_m,
+        )
+
+        for _, row in landmark_rows.iterrows():
+            _draw_landmark_mask_m(ax_left, row, resolution, alpha=0.35)
+            _draw_landmark_centroid_m(ax_left, row, resolution)
+            _draw_landmark_id_m(ax_left, row, resolution)
+
+        ax_left.set_title("Landmarks on Filtered Map")
+        ax_left.set_xlabel("x [m]")
+        ax_left.set_ylabel("y [m]")
+        ax_left.set_aspect("equal")
+
+        # Right: descriptor-space projection.
+        _draw_descriptor_space(ax_right, landmark_rows)
+
+        fig.suptitle(f"{title}")
+
+    draw_sample(idx0)
+
+    slider_ax = fig.add_axes([0.15, 0.06, 0.7, 0.04])
+    slider = Slider(
+        ax=slider_ax,
+        label="Sample",
+        valmin=0,
+        valmax=len(valid_indices) - 1,
+        valinit=idx0,
+        valstep=1,
+    )
+
+    def update(val):
+        idx = int(slider.val)
+        draw_sample(idx)
+        fig.canvas.draw_idle()
+
+    slider.on_changed(update)
+    plt.show()

@@ -9,6 +9,7 @@ use opencv::core::{
     Scalar,
     Rect,
 };
+use opencv::boxed_ref::BoxedRef;
 use nalgebra::Matrix2;
 
 use super::types::*;
@@ -149,7 +150,8 @@ impl FeatureExtractor {
         )?;
 
         // Landmark Measurements ----------
-        // TODO: Explain what it does
+        // Compute each landmarks range/bearing relative to the current map pose.
+        // In addition, fill its measurement uncertainty matrix.
         _update_landmark_measurements(
             &map,
             &mut landmark_set,
@@ -158,6 +160,12 @@ impl FeatureExtractor {
             self.alpha_r,
             self.alpha_theta,
             self.map_offset_yaw,
+        );
+
+        // Landmark Descriptor ----------
+        _update_landmark_descriptors(
+            &input_image,
+            &mut landmark_set,
         );
 
         // Return extracted features ----------
@@ -648,12 +656,16 @@ fn _label_segmented_objects(
     // Run connected-components labeling on the segmented image.
     // This assigns one integer label to each connected foreground region
     // and also computes per-label geometry tables.
+    // Label based on 8-connectivity: 
+    // pixels are connected if they share either an edge or a corner 
+    // (includes diagonals)
+    let connectivity = 8; 
     let num_labels = imgproc::connected_components_with_stats(
         segmented_image,
         &mut labels,
         &mut stats,
         &mut centroids,
-        8,
+        connectivity,
         core::CV_32S,
     )?;
 
@@ -768,7 +780,17 @@ fn _prune_landmarks_by_area(
 
 
 // Landmark Measurement Functions (START) --------------------------------------------------
-// TODO: Explain how it works jesjes
+// Computes the measurement for every detected landmark relative to the current map pose,
+// and also assigns a simple uncertainty matrix to that measurement.
+//
+// After segmentation and labeling, each landmark already has image-space geometry such as
+// centroid, area, bounding box, and mask. This stage turns that into a SLAM-style observation:
+// a polar measurement `z = [r, theta]` and its corresponding covariance `R_z`
+//
+// In short, the landmark centroid is measured relative to the current pose, converted from
+// pixels into meters using the map resolution, and expressed as range and bearing.
+// A simple distance dependent covariance is then added so farther landmarks are treated
+// as more uncertain in later matching and SLAM update steps.
 #[allow(non_snake_case)]
 fn _update_landmark_measurements(
     map: &Map,
@@ -876,3 +898,333 @@ fn _calculate_landmark_measurement_uncertainty(
     return R_z;
 }
 // Landmark Measurement Functions (STOP) --------------------------------------------------
+
+
+
+// Landmark Descriptor Functions (START) --------------------------------------------------
+// TODO: Explain functions
+fn _update_landmark_descriptors(
+    image: &Mat,
+    landmark_set: &mut LandmarkSet,
+) {
+    for landmark in landmark_set.landmarks.values_mut() {
+        // Extract the landmark ROI once from the full image.
+        // If the bounding box is invalid or falls outside the image,
+        // just reset the descriptors for this landmark and continue.
+        let roi = Rect::new(
+            landmark.bounding_box.x,
+            landmark.bounding_box.y,
+            landmark.bounding_box.width,
+            landmark.bounding_box.height,
+        );
+
+        let image_roi = match image.roi(roi) {
+            Ok(image_roi) => image_roi,
+            Err(_) => {
+                landmark.d = LandmarkDescriptors::default();
+                continue;
+            }
+        };
+
+        // Compute descriptors from the same local ROI so all descriptor functions
+        // operate on the exact same landmark image patch.
+        landmark.d.strong = _get_landmark_descriptors_strong(
+            &image_roi,
+            landmark,
+        );
+
+        landmark.d.weak = _get_landmark_descriptors_weak(
+            &image_roi,
+            landmark,
+        );
+    }
+}
+
+fn _get_landmark_descriptors_strong(
+    image_roi: &BoxedRef<'_, Mat>,
+    landmark: &mut Landmark,
+) -> LandmarkDescriptorsStrong {
+    // Calculate descriptors
+    let mean_intensity = _get_landmark_descriptor_mean(
+        &image_roi,
+        &landmark.bounding_box,
+    );
+    let std = _get_landmark_descriptor_std(
+        &image_roi,
+        &landmark.bounding_box,
+        mean_intensity,
+        landmark.d.weak.area as f64,
+    );
+    let contrast = _get_landmark_descriptor_contrast(
+        &image_roi,
+        &landmark.bounding_box,
+    );
+    let entropy = _get_landmark_descriptor_entropy(
+        &image_roi,
+        &landmark.bounding_box,
+        landmark.d.weak.area as f64,
+    );
+
+    // Build and return descriptor
+    let d = LandmarkDescriptorsStrong {
+        mean_intensity,
+        std,
+        contrast,
+        entropy,
+    };
+
+    return d;
+}
+
+fn _get_landmark_descriptor_mean(
+    image_roi: &BoxedRef<'_, Mat>,
+    bounding_box: &BoundingBox,
+) -> f64 {
+    // Compute the mean only over pixels where the landmark mask is active.
+    let mean_scalar = match core::mean(&image_roi, &bounding_box.mask) {
+        Ok(mean) => mean,
+        Err(_) => return 0.0,
+    };
+
+    return mean_scalar[0];
+}
+
+fn _get_landmark_descriptor_std(
+    image_roi: &BoxedRef<'_, Mat>,
+    bounding_box: &BoundingBox,
+    mean: f64,
+    area: f64,
+) -> f64 {
+    // Sum squared deviation from the mean over only the masked landmark pixels.
+    let mut sum_sq = 0.0;
+
+    for y in 0..bounding_box.height {
+        for x in 0..bounding_box.width {
+            // Get the pixel mask value (background = 0, object = 255)
+            let mask_value = *bounding_box.mask.at_2d::<u8>(y, x).unwrap();
+
+            // Calculate sum square of the pixel intensity if its a valid object pixel
+            if mask_value > 0 {
+                let pixel = *image_roi.at_2d::<u8>(y, x).unwrap() as f64;
+                let diff = pixel - mean;
+                sum_sq += diff * diff;
+            }
+        }
+    }
+
+    // Standard deviation = sqrt(average squared deviation from mean)
+    let variance = if area > 0.0 {
+        sum_sq/area
+    } else {
+        0.0
+    };
+
+    let std = variance.sqrt();
+
+    return std;
+}
+
+#[allow(non_snake_case)]
+fn _get_landmark_descriptor_contrast(
+    image_roi: &BoxedRef<'_, Mat>,
+    bounding_box: &BoundingBox,
+) -> f64 {
+    let mut I_min = 0.0;
+    let mut I_max = 0.0;
+
+    if core::min_max_loc(
+        image_roi,
+        Some(&mut I_min),
+        Some(&mut I_max),
+        None,
+        None,
+        &bounding_box.mask,
+    ).is_err() {
+        return 0.0;
+    }
+
+    // Small epsilon to ensure we don't divide by 0
+    let eps = 1e-9;
+    let contrast = (I_max - I_min)/(I_max + I_min + eps);
+
+    return contrast;
+}
+
+#[allow(non_snake_case)]
+fn _get_landmark_descriptor_entropy(
+    image_roi: &BoxedRef<'_, Mat>,
+    bounding_box: &BoundingBox,
+    area: f64,
+) -> f64 {
+    // Compute the intensity histogram only for pixels that belong to the masked landmark.
+    // Instead of using all 256 grayscale levels directly, we group them into `K` coarser bins.
+    // This gives a compact intensity distribution for just the current landmark region.
+    let K = 32;
+    let hist_size = core::Vector::<i32>::from(vec![K]);
+    let channels = core::Vector::<i32>::from(vec![0]);
+    let ranges = core::Vector::<f32>::from(vec![0.0, 256.0]);
+    
+    let mut images = core::Vector::<Mat>::new();
+    images.push(image_roi.clone_pointee());
+
+    let mut hist = Mat::default();
+    if imgproc::calc_hist(
+        &images,
+        &channels,
+        &bounding_box.mask,
+        &mut hist,
+        &hist_size,
+        &ranges,
+        false,
+    ).is_err() {
+        return 0.0;
+    }
+
+    // Convert each histogram count `h_i` into a probability `p_i = h_i/area`,
+    // then compute Shannon entropy over the landmark intensity distribution.
+    // Higher entropy means the landmark contains a more varied spread of intensities,
+    // while lower entropy means the intensities are more concentrated/similar.
+    // Note that eps is here in order for log to never be 0
+    let N = area; // Number of pixels in area is the same as area so just use that
+    let eps = 1e-12;
+    let mut entropy = 0.0;
+
+    for i in 0..K {
+        let h_i = match hist.at_2d::<f32>(i, 0) {
+            Ok(v) => *v as f64,
+            Err(_) => 0.0,
+        };
+
+        let p_i = h_i/N;
+        if p_i > 0.0 {
+            entropy -= p_i * (p_i + eps).log2();
+        }
+    }
+
+    return entropy;
+}
+
+fn _get_landmark_descriptors_weak(
+    image_roi: &BoxedRef<'_, Mat>,
+    landmark: &mut Landmark,
+) -> LandmarkDescriptorsWeak {
+    // Calculate descriptors
+    // area = Already calculated from labelling step, so we good :)
+    // polar_coordinates = Also already calculated from measurement step, noice 0o0
+    let radial_intensity_gradient = _get_landmark_descriptor_gradient(
+        &image_roi,
+        &landmark.bounding_box,
+        landmark.d.weak.area as f64,
+    );
+
+    // Build and return descriptor
+    let d = LandmarkDescriptorsWeak {
+        area: landmark.d.weak.area,
+        polar_coordinates: landmark.z,
+        radial_intensity_gradient,
+    };
+
+    return d;
+}
+
+#[allow(non_snake_case)]
+fn _get_landmark_descriptor_gradient(
+    image_roi: &BoxedRef<'_, Mat>,
+    bounding_box: &BoundingBox,
+    area: f64,
+) -> f64 {
+    if area <= 0.0 {
+        return 0.0;
+    }
+
+    // Sobel settings.
+    // We compute the spatial image derivative separately in x and y direction.
+    // `sobel_ddepth` sets the output type for the gradient image.
+    // We use CV_64F so negative gradients and larger derivative values are preserved safely.
+    //
+    // `sobel_kernel_size` controls how large derivative stencil is used.
+    // A value of 3 is the common standard choice and gives a reasonable balance
+    // between sensitivity and smoothing.
+    //
+    // `sobel_scale` scales the derivative result.
+    // `sobel_delta` adds a constant offset after filtering, which we keep at 0 here.
+    //
+    // `sobel_border_type` controls how image borders are handled during filtering.
+    let sobel_ddepth = core::CV_64F;
+    let sobel_kernel_size = 3;
+    let sobel_scale = 1.0;
+    let sobel_delta = 0.0;
+    let sobel_border_type = core::BORDER_DEFAULT;
+
+    // Compute the horizontal and vertical image gradients inside the landmark ROI.
+    // `grad_x` measures how intensity changes left-right,
+    // while `grad_y` measures how intensity changes up-down.
+    let mut grad_x = Mat::default();
+    let mut grad_y = Mat::default();
+
+    if imgproc::sobel(
+        image_roi,
+        &mut grad_x,
+        sobel_ddepth,
+        1,
+        0,
+        sobel_kernel_size,
+        sobel_scale,
+        sobel_delta,
+        sobel_border_type,
+    ).is_err() {
+        return 0.0;
+    }
+
+    if imgproc::sobel(
+        image_roi,
+        &mut grad_y,
+        sobel_ddepth,
+        0,
+        1,
+        sobel_kernel_size,
+        sobel_scale,
+        sobel_delta,
+        sobel_border_type,
+    ).is_err() {
+        return 0.0;
+    }
+
+    // For each valid landmark pixel, combine x and y gradients into one gradient magnitude:
+    // sqrt(gx^2 + gy^2)
+    //
+    // This gives one local edge-strength value per landmark pixel.
+    // We then average those values over the masked landmark area,
+    // so the final descriptor becomes a simple measure of how strong
+    // the intensity transitions are inside that landmark region.
+    let mut sum_grad = 0.0;
+
+    for y in 0..bounding_box.height {
+        for x in 0..bounding_box.width {
+            let mask_value = match bounding_box.mask.at_2d::<u8>(y, x) {
+                Ok(v) => *v,
+                Err(_) => 0,
+            };
+
+            if mask_value > 0 {
+                let gx = match grad_x.at_2d::<f64>(y, x) {
+                    Ok(v) => *v,
+                    Err(_) => 0.0,
+                };
+
+                let gy = match grad_y.at_2d::<f64>(y, x) {
+                    Ok(v) => *v,
+                    Err(_) => 0.0,
+                };
+
+                sum_grad += (gx*gx + gy*gy).sqrt();
+            }
+        }
+    }
+
+    // Return the average gradient magnitude over the landmark pixels only.
+    let gradient = sum_grad/area;
+
+    return gradient;
+}
+// Landmark Descriptor Functions (STOP) --------------------------------------------------

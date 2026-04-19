@@ -62,7 +62,7 @@ pub enum LocalThresholdOp {
 }
 
 // Measurement from vehicle/map origin to landmark.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct LandmarkMeasurement {
     pub r: f64,     // Range [m]
     pub theta: f64, // Bearing [rad]
