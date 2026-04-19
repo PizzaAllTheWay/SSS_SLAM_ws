@@ -6,6 +6,7 @@
 
 
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
@@ -186,6 +187,10 @@ impl LoggerLandmarkSet {
                     "area",
                     "z_r",
                     "z_theta",
+                    "R_z_rr",
+                    "R_z_rtheta",
+                    "R_z_thetar",
+                    "R_z_thetatheta",
                     "mask_width",
                     "mask_height",
                     "mask",
@@ -219,6 +224,10 @@ impl LoggerLandmarkSet {
                 landmark.d.weak.area.to_string(),
                 landmark.z.r.to_string(),
                 landmark.z.theta.to_string(),
+                landmark.R_z[(0, 0)].to_string(),
+                landmark.R_z[(0, 1)].to_string(),
+                landmark.R_z[(1, 0)].to_string(),
+                landmark.R_z[(1, 1)].to_string(),
                 mask_width.to_string(),
                 mask_height.to_string(),
                 mask_str,
@@ -344,6 +353,41 @@ fn main() -> opencv::Result<()> {
     // Smaller values keep more landmarks, but also allow more small noisy segments through.
     let landmark_area_min = 5_000; // [pixel]
 
+    // Landmark measurement uncertainty settings.
+    // These parameters define the base uncertainty in landmark range/bearing,
+    // and how that uncertainty grows as the landmark gets farther away.
+    //
+    // `sigma_r` is the base range standard deviation [m].
+    // Larger values mean the measured landmark distance is trusted less overall.
+    // Smaller values mean the range measurement is trusted more.
+    // Recommended: same or bigger than map resolution
+    //
+    // `sigma_theta` is the base bearing standard deviation [rad].
+    // Larger values mean the measured landmark angle is trusted less overall.
+    // Smaller values mean the bearing measurement is trusted more.
+    //
+    // `alpha_r` controls how strongly range uncertainty increases with distance.
+    // Larger values make far landmarks much less certain in range.
+    // Smaller values keep range uncertainty more constant over distance.
+    //
+    // `alpha_theta` controls how strongly bearing uncertainty increases with distance.
+    // Larger values make far landmarks much less certain in angle.
+    // Smaller values keep bearing uncertainty more constant over distance.
+    // TODO: TUNE THESE
+    // !!! TUNE THESE
+    let sigma_r = 0.03;     // [m]
+    let sigma_theta = 0.01; // [rad]
+    let alpha_r = 0.025;
+    let alpha_theta = 0.005;
+
+    // ? NOTE:
+    // ? Temporary yaw alignment correction used during map generation.
+    // ? The current pose yaw convention and the map/sonar ground-plane convention
+    // ? are offset by 90 degrees, so this fixed correction is applied to align them.
+    // ? This is only a workaround for the current frame mismatch and should ideally
+    // ? be removed once the underlying frame definitions are made fully consistent.
+    let map_offset_yaw = -PI/2.0;
+
     let mut extractor = FeatureExtractor::new(
         filter_d,
         filter_sigma_color,
@@ -355,6 +399,13 @@ fn main() -> opencv::Result<()> {
         min_support,
 
         landmark_area_min,
+
+        sigma_r,
+        sigma_theta,
+        alpha_r,
+        alpha_theta,
+
+        map_offset_yaw,
     );
 
     // Timing stats

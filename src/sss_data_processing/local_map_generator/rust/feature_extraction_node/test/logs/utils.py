@@ -344,3 +344,234 @@ def plot_segmented_and_labeled(segmented_df, landmark_df, title="Before/After"):
     slider.on_changed(update)
     plt.show()
 
+
+
+# PLOT FOR Measurements ----------
+def _random_color_from_id(label_id):
+    rng = np.random.default_rng(int(label_id))
+    return tuple(rng.uniform(0.15, 0.95, size=3))
+
+def _image_extent_m(row):
+    resolution = float(row["resolution"])
+    width = int(row["width"])
+    height = int(row["height"])
+    return (0.0, width * resolution, height * resolution, 0.0)
+
+def _pixel_to_meter_xy(x_px, y_px, resolution):
+    return x_px * resolution, y_px * resolution
+
+def _masked(img):
+    return np.ma.masked_where(img == 0, img)
+
+def _draw_landmark_mask_m(ax, row, resolution, alpha=0.35):
+    x = int(row["bbox_x"])
+    y = int(row["bbox_y"])
+    width = int(row["bbox_width"])
+    height = int(row["bbox_height"])
+    mask = parse_mask_from_row(row)
+
+    color = _random_color_from_id(int(row["label_id"]))
+
+    rgba = np.zeros((height, width, 4), dtype=float)
+    rgba[..., 0] = color[0]
+    rgba[..., 1] = color[1]
+    rgba[..., 2] = color[2]
+    rgba[..., 3] = np.where(mask > 0, alpha, 0.0)
+
+    x0_m = x * resolution
+    x1_m = (x + width) * resolution
+    y0_m = y * resolution
+    y1_m = (y + height) * resolution
+
+    ax.imshow(
+        rgba,
+        interpolation="nearest",
+        extent=(x0_m, x1_m, y1_m, y0_m),
+    )
+
+def _draw_landmark_centroid_m(ax, row, resolution):
+    cx_m, cy_m = _pixel_to_meter_xy(
+        float(row["cx"]),
+        float(row["cy"]),
+        resolution,
+    )
+
+    ax.plot(
+        cx_m,
+        cy_m,
+        marker="o",
+        markersize=4,
+        color="black",
+    )
+
+def _draw_pose_origin_m(ax, row, resolution):
+    pose_x_m, pose_y_m = _pixel_to_meter_xy(
+        float(row["pose_x"]),
+        float(row["pose_y"]),
+        resolution,
+    )
+
+    ax.plot(
+        pose_x_m,
+        pose_y_m,
+        marker="x",
+        markersize=8,
+        color="red",
+        markeredgewidth=2.0,
+    )
+
+    return pose_x_m, pose_y_m
+
+def _draw_landmark_measurement_line(ax, row, pose_x_m, pose_y_m, pose_yaw, yaw_offset):
+    r = float(row["z_r"])
+    theta = float(row["z_theta"])
+
+    theta_map = pose_yaw + theta + yaw_offset
+
+    end_x_m = pose_x_m + r * np.cos(theta_map)
+    end_y_m = pose_y_m + r * np.sin(theta_map)
+
+    ax.plot(
+        [pose_x_m, end_x_m],
+        [pose_y_m, end_y_m],
+        color="black",
+        linewidth=1.2,
+    )
+
+def _draw_landmark_covariance_ellipse(ax, row, pose_x_m, pose_y_m, pose_yaw, yaw_offset, n_sigma=2.0):
+    r = float(row["z_r"])
+    theta = float(row["z_theta"])
+
+    theta_map = pose_yaw + theta + yaw_offset
+
+    R_polar = np.array([
+        [float(row["R_z_rr"]),       float(row["R_z_rtheta"])],
+        [float(row["R_z_thetar"]),   float(row["R_z_thetatheta"])],
+    ], dtype=float)
+
+    # Convert polar covariance to local Cartesian covariance at the landmark endpoint.
+    J = np.array([
+        [np.cos(theta_map), -r * np.sin(theta_map)],
+        [np.sin(theta_map),  r * np.cos(theta_map)],
+    ], dtype=float)
+
+    R_xy = J @ R_polar @ J.T
+
+    vals, vecs = np.linalg.eigh(R_xy)
+    vals = np.maximum(vals, 0.0)
+
+    order = np.argsort(vals)[::-1]
+    vals = vals[order]
+    vecs = vecs[:, order]
+
+    angle_deg = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+
+    end_x_m = pose_x_m + r * np.cos(theta_map)
+    end_y_m = pose_y_m + r * np.sin(theta_map)
+
+    ellipse = patches.Ellipse(
+        (end_x_m, end_y_m),
+        width=2.0 * n_sigma * np.sqrt(vals[0]),
+        height=2.0 * n_sigma * np.sqrt(vals[1]),
+        angle=angle_deg,
+        facecolor=(0.0, 0.0, 0.0, 0.08),
+        edgecolor=(0.0, 0.0, 0.0, 0.35),
+        linewidth=1.0,
+    )
+    ax.add_patch(ellipse)
+
+def plot_landmark_measurements(filtered_df, landmark_df, title="Landmark Measurements", yaw_offset=0.0):
+    if len(filtered_df) == 0:
+        raise ValueError("No filtered image samples to plot")
+    if len(landmark_df) == 0:
+        raise ValueError("No landmark samples to plot")
+
+    filtered_df = filtered_df.reset_index(drop=True)
+
+    # Group landmark rows by timestamp.
+    landmark_groups = {
+        float(t): group.reset_index(drop=True)
+        for t, group in landmark_df.groupby("t", sort=True)
+    }
+
+    # Only keep samples that exist in both logs.
+    valid_indices = []
+    for i in range(len(filtered_df)):
+        t = float(filtered_df.iloc[i]["t"])
+        if t in landmark_groups:
+            valid_indices.append(i)
+
+    if len(valid_indices) == 0:
+        raise ValueError("No matching timestamps between filtered image csv and landmark csv")
+
+    idx0 = 0
+
+    cmap_img = cm.get_cmap("copper").copy()
+    cmap_img.set_bad(color="white")
+
+    fig, ax = plt.subplots(1, 1, figsize=(11, 9))
+    plt.subplots_adjust(bottom=0.16)
+
+    def draw_sample(sample_idx):
+        ax.clear()
+
+        df_idx = valid_indices[sample_idx]
+        filtered_row = filtered_df.iloc[df_idx]
+        t = float(filtered_row["t"])
+        landmark_rows = landmark_groups[t]
+
+        filtered_image = get_processed_image_from_row(filtered_row)
+        resolution = float(filtered_row["resolution"])
+        extent_m = _image_extent_m(filtered_row)
+
+        valid = filtered_image[filtered_image != 0]
+        vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
+        vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
+
+        # Background filtered image in metric coordinates.
+        ax.imshow(
+            _masked(filtered_image),
+            cmap=cmap_img,
+            interpolation="nearest",
+            vmin=vmin,
+            vmax=vmax,
+            extent=extent_m,
+        )
+
+        # Map pose / origin marker.
+        pose_x_m, pose_y_m = _draw_pose_origin_m(ax, filtered_row, resolution)
+        pose_yaw = float(filtered_row["pose_yaw"])
+
+        # Overlay landmark masks, centroids, measurement rays, and covariance.
+        for _, row in landmark_rows.iterrows():
+            _draw_landmark_mask_m(ax, row, resolution, alpha=0.35)
+            _draw_landmark_centroid_m(ax, row, resolution)
+            _draw_landmark_measurement_line(ax, row, pose_x_m, pose_y_m, pose_yaw, yaw_offset)
+            _draw_landmark_covariance_ellipse(ax, row, pose_x_m, pose_y_m, pose_yaw, yaw_offset, n_sigma=2.0)
+
+        ax.set_title("Landmark Measurements")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_aspect("equal")
+
+        fig.suptitle(f"{title}")
+
+    draw_sample(idx0)
+
+    slider_ax = fig.add_axes([0.15, 0.06, 0.7, 0.04])
+    slider = Slider(
+        ax=slider_ax,
+        label="Sample",
+        valmin=0,
+        valmax=len(valid_indices) - 1,
+        valinit=idx0,
+        valstep=1,
+    )
+
+    def update(val):
+        idx = int(slider.val)
+        draw_sample(idx)
+        fig.canvas.draw_idle()
+
+    slider.on_changed(update)
+    plt.show()
