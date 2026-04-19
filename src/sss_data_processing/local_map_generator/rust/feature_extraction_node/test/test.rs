@@ -225,31 +225,55 @@ fn main() -> opencv::Result<()> {
     // In short:
     // larger values -> stronger smoothing, less noise, more detail loss, weaker edge preservation
     // smaller values -> weaker smoothing, more noise left, better detail and edge preservation
-    // !!! FInd good numbers here
-    // let filter_d: i32 = 9;
-    // let filter_sigma_color: f64 = 30.0;
-    // let filter_sigma_space: f64 = 80.0;
-
-    // ? 1 STNADRAD
-    // let filter_d: i32 = 21;
-    // let filter_sigma_color: f64 = 60.0;
-    // let filter_sigma_space: f64 = 100.0;
-
-    // ? 2 Hmmm the smoothing was very good here actually
-    // let filter_d: i32 = 31;
-    // let filter_sigma_color: f64 = 60.0;
-    // let filter_sigma_space: f64 = 100.0;
-
-    // ? 3 THIS IS GOOD!
     let filter_d: i32 = 31;
     let filter_sigma_color: f64 = 80.0;
     let filter_sigma_space: f64 = 100.0;
+
+    // Semantic segmentation settings.
+    // These parameters control how local bright/shadow candidates are found,
+    // and how strict the later semantic support check is.
+    //
+    // `local_window_size` is the size of the local area used to compute the mean intensity around each pixel.
+    // Larger values make the local mean more global and smoother, which reduces noise sensitivity
+    // but can miss small local structures. Smaller values make the method more sensitive to local changes,
+    // but also more sensitive to noise and speckles.
+    //
+    // `local_offset` is how much brighter or darker a pixel must be than its local mean
+    // to be marked as a bright or shadow candidate.
+    // Larger values make the threshold stricter, so fewer pixels are accepted.
+    // Smaller values make it easier for pixels to become candidates, which increases sensitivity
+    // but can also create more false positives.
+    //
+    // `search_radius` is the radius of the neighborhood used when checking whether
+    // bright and shadow candidates support each other.
+    // Larger values allow support from farther away pixels, which can preserve bigger object-shadow patterns
+    // but may also connect unrelated regions. Smaller values make the support check more local and strict.
+    //
+    // `min_support` is the minimum number of nearby opposite-class pixels required
+    // for a candidate pixel to survive the semantic filtering.
+    // Larger values give stricter pruning and remove more isolated noise,
+    // while smaller values keep more candidates but also let more weak or noisy regions survive.
+    //
+    // In short:
+    // larger `local_window_size` -> more global behavior
+    // larger `local_offset` -> stricter candidate detection
+    // larger `search_radius` -> wider support search
+    // larger `min_support` -> stricter semantic pruning
+    let local_window_size = 51;
+    let local_offset = 3.0;
+    let search_radius = 21;
+    let min_support = 100;
 
 
     let mut extractor = FeatureExtractor::new(
         filter_d,
         filter_sigma_color,
         filter_sigma_space,
+
+        local_window_size,
+        local_offset,
+        search_radius,
+        min_support,
     );
 
     // Timing stats
