@@ -76,6 +76,10 @@ pub struct FeatureExtractor {
     filtered_image: Mat,
     // Image after segmenting background from objects
     segmented_image: Mat,
+
+    // Previous Map Position in world frame
+    // Used for height estimation as a guide where the trajectory is moving
+    last_map_pose: Pose3D,
 }
 impl FeatureExtractor {
     pub fn new(
@@ -131,6 +135,8 @@ impl FeatureExtractor {
 
             filtered_image: Mat::default(),
             segmented_image: Mat::default(),
+
+            last_map_pose: Pose3D::default(),
         }
     }
 
@@ -142,6 +148,7 @@ impl FeatureExtractor {
     pub fn extract_features_from_map(
         &mut self,
         map: &Map,
+        pose: &Pose3D,
         altitude: f64,
     ) -> opencv::Result<LandmarkSet> {
         // Convert Map into image ----------
@@ -199,12 +206,15 @@ impl FeatureExtractor {
         if self.height_estimation_enabled {
             _estimate_landmark_height(
                 &map,
+                pose,
                 altitude,
+                &mut self.last_map_pose,
                 &self.filtered_image,
                 &mut landmark_set,
                 self.shadow_area_min_ratio,
                 self.shadow_area_max_ratio,
                 self.shadow_threshold_bias,
+                self.map_offset_yaw,
             );
         }
 
@@ -950,28 +960,62 @@ fn _calculate_landmark_measurement_uncertainty(
 
 
 // Height Estimation Functions (START) --------------------------------------------------
-// Estimates a rough physical height for each detected landmark using its sonar shadow.
+// Estimates a rough landmark height by combining three simpler geometric pieces:
+// where the landmark is in the world, where it roughly aligns with the recent vehicle path,
+// and how long its associated shadow appears in the filtered sonar image.
 //
-// Big picture:
-// after landmarks have already been segmented and labeled, we try to recover one extra
-// geometric cue: object height. For each landmark we first estimate the length of its
-// associated dark shadow region in the filtered sonar image, then combine that shadow
-// length with the vehicle altitude to produce a rough height estimate.
+// The first part of this function turns the landmark measurement from map-relative polar form
+// into a world-frame x-y position. That gives a common geometric reference for later steps.
+// Then, using the current and previous vehicle poses, the landmark is projected onto the
+// recent path line. This projected point is used as a rough guess for the ground point that
+// the object aligns with relative to the vehicle motion. The straight-line distance between
+// the landmark world position and that projected ground point becomes the estimated ground range.
+//
+// The second part estimates the landmark shadow length directly from the filtered image.
+// A local threshold is built from the landmark ROI, dark connected components are extracted,
+// and the most plausible shadow blob is selected using size and proximity constraints.
+// This gives a shadow length in meters. Finally, that shadow length, the estimated ground
+// range, and the current altitude are combined with a simplified flat-ground similar-triangles
+// model to produce a rough landmark height.
 //
 // Important:
-// this is only a weak approximation. It assumes simplified flat-ground shadow geometry,
-// so the result is useful as an extra descriptor/cue, not as a precise height measurement.
+// this is still only a weak geometric cue, not a precise physical measurement.
+// It depends on several approximations: the recent vehicle path is used as a proxy for viewing
+// direction, the ground is assumed locally flat, the chosen dark blob is assumed to be the true
+// shadow, and more complex sonar effects such as slope, roughness, distortion, and changing
+// grazing angle are ignored. So the result is mainly useful as an extra descriptor for later
+// matching or filtering, not as a trusted standalone estimate of real object height.
 fn _estimate_landmark_height(
     map: &Map,
+    pose: &Pose3D,
     altitude: f64,
+    last_map_pose: &mut Pose3D,
     filtered_image: &Mat,
     landmark_set: &mut LandmarkSet,
     shadow_area_min_ratio: f64,
     shadow_area_max_ratio: f64,
     shadow_threshold_bias: f64,
+    map_offset_yaw: f64,
 ) {
     for landmark in landmark_set.landmarks.values_mut() {
-        let estimated_shadow_length = _estimate_landmark_shadow_length(
+        let landmark_p_world = _landmark_measurement_to_world_xy(
+            pose,
+            &landmark.z,
+            map_offset_yaw,
+        );
+
+        let estimated_landmark_ground_p_world = _find_closest_point_on_infinite_line(
+            landmark_p_world,
+            (pose.position.x, pose.position.y),
+            (last_map_pose.position.x, last_map_pose.position.y),
+        );
+
+        let estimated_landmark_ground_distance = _calculate_ground_range_between_points(
+            landmark_p_world,
+            estimated_landmark_ground_p_world,
+        );
+
+        let estimated_shadow_length = _estimate_landmark_shadow(
             filtered_image,
             landmark,
             map.resolution,
@@ -982,11 +1026,88 @@ fn _estimate_landmark_height(
 
         let estimated_height = _calculate_landmark_height(
             estimated_shadow_length,
+            estimated_landmark_ground_distance,
             altitude,
         );
 
         landmark.estimated_height = estimated_height;
     }
+
+    // Update last pose with current pose now
+    *last_map_pose = pose.clone();
+}
+
+fn _landmark_measurement_to_world_xy(
+    pose: &Pose3D,
+    landmark_measurement: &LandmarkMeasurement,
+    map_offset_yaw: f64,
+) -> (f64, f64) {
+    // Landmark bearing expressed in the world/map frame.
+    // This is just vehicle yaw plus the relative landmark bearing,
+    // plus the extra yaw alignment offset used by the map pipeline.
+    let theta_world = pose.orientation.yaw + landmark_measurement.theta + map_offset_yaw;
+
+    // Project the landmark range along that world-frame direction.
+    // This converts the polar landmark measurement into Cartesian world coordinates.
+    let landmark_x_world = pose.position.x + landmark_measurement.r * theta_world.cos();
+    let landmark_y_world = pose.position.y + landmark_measurement.r * theta_world.sin();
+
+    return (landmark_x_world, landmark_y_world);
+}
+
+// Finds the closest point on the vehicle path line to the landmark.
+// Projects the landmark onto the line between current and previous pose.
+// Used to estimate where the landmark aligns with the trajectory.
+#[allow(non_snake_case)]
+fn _find_closest_point_on_infinite_line(
+    p: (f64, f64), // Landmark (C) [x,y]
+    a: (f64, f64), // Pose (A) [x,y]
+    b: (f64, f64), // Last Map Pose (B) [x,y]
+) -> (f64, f64) {
+    // 1. Define vectors
+    let v_x = b.0 - a.0;
+    let v_y = b.1 - a.1;
+    let w_x = p.0 - a.0;
+    let w_y = p.1 - a.1;
+
+    // 2. Find the dot products
+    // v.dot(w) and v.dot(v)
+    let dot_vw = v_x * w_x + v_y * w_y;
+    let dot_vv = v_x * v_x + v_y * v_y;
+
+    // 3. Calculate t (Where on teh line does point exist)
+    // If dot_vv is 0, then A and B same point.
+    if dot_vv < 1e-9 { 
+        return a; 
+    }
+    let t = dot_vw/dot_vv;
+
+    // 4. Return the closest point P = A + t*V
+    let P = (a.0 + t * v_x, a.1 + t * v_y);
+
+    return P;
+}
+
+// Computes the straight-line ground distance between two 2D points.
+// It returns the Euclidean distance in the flat x-y plane.
+// This is used to estimate how far the landmark is from the
+// projected point on the vehicle trajectory.
+fn _calculate_ground_range_between_points(
+    p1: (f64, f64),
+    p2: (f64, f64),
+) -> f64 {
+    // Compute the Cartesian difference between the two world points.
+    // Both points are assumed to already be expressed in the same world frame
+    // and in the same metric unit, typically meters.
+    let dx = p1.0 - p2.0;
+    let dy = p1.1 - p2.1;
+
+    // The ground range is just the Euclidean distance in the horizontal plane.
+    // This gives the straight-line distance between the landmark position
+    // and the estimated ground point position.
+    let ground_range = (dx * dx + dy * dy).sqrt();
+
+    return ground_range;
 }
 
 // Estimates the physical shadow length for one landmark by deriving a local
@@ -995,8 +1116,9 @@ fn _estimate_landmark_height(
 // The candidate whose size is reasonable and whose centroid is closest to the
 // landmark is selected as the most likely shadow, and its spatial extent is
 // converted from pixels to meters using the map resolution.
+// In addition save shadow centroid for later use for distance gauge
 #[allow(non_snake_case)]
-fn _estimate_landmark_shadow_length(
+fn _estimate_landmark_shadow(
     filtered_image: &Mat,
     landmark: &mut Landmark,
     resolution: f64,
@@ -1094,6 +1216,7 @@ fn _estimate_landmark_shadow_length(
     // Among all valid dark regions, choose the one whose centroid is closest
     // to the landmark centroid. This is a simple and usually robust heuristic
     // for picking the shadow that belongs to the landmark.
+    // In addition save shadow center, it will come in handy later
     let mut best_label = -1;
     let mut best_dist_sq = f64::INFINITY;
 
@@ -1178,47 +1301,61 @@ fn _estimate_landmark_shadow_length(
     return estimated_shadow_length;
 }
 
-// Estimates landmark height from shadow length using a very rough flat-ground
-// similar-triangles approximation.
+// Estimates landmark height from vehicle altitude, ground range to the object,
+// and measured shadow length using a flat-ground similar-triangles model.
 //
-// Important:
-// this estimate is quite iffy and should only be treated as a weak geometric cue,
-// not as a physically reliable height measurement.
+// Big picture:
+// we assume a simple 2D side-view geometry where the sonar/platform is at height `H`
+// above a locally flat ground plane, the object starts at ground range `D` from the sensor,
+// and the object's shadow extends an additional ground length `L` behind the object.
 //
-// Why it is only approximate:
-// - it assumes the seafloor / ground is locally flat
-// - it assumes the shadow is cast on that flat ground without terrain variation
-// - it assumes a simple 2D similar-triangles geometry
-// - it ignores many real effects such as sonar/viewing geometry, grazing angle changes,
-//   vehicle motion, local slope, rough surface structure, and shadow distortion
+// Under that simplified geometry, the large triangle spans from the sensor down to the
+// shadow tip at ground range `D + L`, while the smaller similar triangle spans from the
+// object top down to the shadow tip over only the shadow length `L`.
 //
-// Intuition:
-// if the vehicle altitude is H and the observed shadow length is L,
-// then under this simplified geometry the object height h can be approximated
-// from similar triangles. Rearranging that relation gives
+// Similar triangles then give:
 //
-//     h = (H * L) / (H + L)
+//     h / L = H / (D + L)
+//
+// which rearranges to:
+//
+//     h = (H * L) / (D + L)
 //
 // where:
-// - H = vehicle altitude above the ground
-// - L = estimated shadow length
+// - H = platform altitude above the ground
+// - D = ground range from platform to the object
+// - L = measured shadow length behind the object
 // - h = estimated landmark height
 //
-// Behavior:
-// - returns 0.0 if the inputs are invalid
-// - otherwise returns a rough height estimate in the same length unit
-//   as altitude and shadow length
+// Important:
+// this is still only a rough geometric cue, not a precise physical height.
+// It assumes:
+// - locally flat ground / seafloor
+// - a clean shadow cast along the ground plane
+// - simplified 2D geometry
+// - no terrain slope, no roughness effects, no shadow warping,
+//   and no more complex sonar imaging effects
+#[allow(non_snake_case)]
 fn _calculate_landmark_height(
     estimated_shadow_length: f64,
+    estimated_landmark_ground_distance: f64,
     altitude: f64,
 ) -> f64 {
     // Invalid or degenerate geometry gives no meaningful estimate.
-    if altitude <= 0.0 || estimated_shadow_length <= 0.0 {
+    // We require positive altitude, positive shadow length,
+    // and a non-negative ground distance to the object.
+    if altitude <= 0.0 || estimated_shadow_length <= 0.0 || estimated_landmark_ground_distance < 0.0 {
         return 0.0;
     }
 
-    // Very rough flat-ground similar-triangles estimate.
-    let estimated_height = (altitude * estimated_shadow_length)/(altitude + estimated_shadow_length);
+    // Apply the flat-ground similar-triangles relation:
+    // h = (H * L) / (D + L)
+    let H = altitude;
+    let L = estimated_shadow_length;
+    let D = estimated_landmark_ground_distance;
+    let h = (H * L)/(D + L);
+
+    let estimated_height = h;
 
     return estimated_height;
 }

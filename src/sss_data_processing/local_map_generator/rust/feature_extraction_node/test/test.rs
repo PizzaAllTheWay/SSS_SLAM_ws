@@ -282,6 +282,63 @@ fn reshape_flat_u8_to_2d(data: Vec<u8>, width: usize, height: usize) -> Vec<Vec<
 }
 
 #[derive(Debug, Clone)]
+struct Pose3DSample {
+    t: f64,
+    pose: Pose3D,
+}
+
+fn load_pose3d_csv(path: &str) -> Vec<Pose3DSample> {
+    let file = BufReader::new(File::open(path).unwrap());
+
+    file.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let line = line.ok()?;
+            let parts: Vec<&str> = line.split(',').collect();
+
+            if parts.len() < 7 {
+                return None;
+            }
+
+            Some(Pose3DSample {
+                t: parts[0].parse().ok()?,
+                pose: Pose3D {
+                    position: Position {
+                        x: parts[1].parse().ok()?,
+                        y: parts[2].parse().ok()?,
+                        z: parts[3].parse().ok()?,
+                    },
+                    orientation: Orientation {
+                        roll: parts[4].parse().ok()?,
+                        pitch: parts[5].parse().ok()?,
+                        yaw: parts[6].parse().ok()?,
+                    },
+                },
+            })
+        })
+        .collect()
+}
+
+fn get_closest_pose3d(
+    pose3d_samples: &[Pose3DSample],
+    pose3d_idx: &mut usize,
+    t: f64,
+) -> Option<Pose3D> {
+    if pose3d_samples.is_empty() {
+        return None;
+    }
+
+    while *pose3d_idx + 1 < pose3d_samples.len()
+        && (pose3d_samples[*pose3d_idx + 1].t - t).abs()
+            <= (pose3d_samples[*pose3d_idx].t - t).abs()
+    {
+        *pose3d_idx += 1;
+    }
+
+    Some(pose3d_samples[*pose3d_idx].pose.clone())
+}
+
+#[derive(Debug, Clone)]
 struct AltitudeSample {
     t: f64,
     z: f64,
@@ -339,7 +396,10 @@ fn main() -> opencv::Result<()> {
 
     let map_file = BufReader::new(File::open("test/data/map.csv").unwrap());
     let origin_file = BufReader::new(File::open("test/data/map_origin.csv").unwrap());
-    
+
+    let pose3d_samples = load_pose3d_csv("test/data/map_pose.csv");
+    let mut pose3d_idx: usize = 0;
+        
     let altitude_samples = load_altitude_csv("test/data/altitude.csv");
     let mut altitude_idx: usize = 0;
 
@@ -491,7 +551,7 @@ fn main() -> opencv::Result<()> {
     let height_estimation_enabled = true;
     let shadow_area_min_ratio = 0.03;
     let shadow_area_max_ratio = 1.50;
-    let shadow_threshold_bias = -5.0;
+    let shadow_threshold_bias = -2.5;
 
     // ? NOTE:
     // ? Temporary yaw alignment correction used during map generation.
@@ -576,6 +636,11 @@ fn main() -> opencv::Result<()> {
             data: map_data,
         };
 
+        let pose3d = match get_closest_pose3d(&pose3d_samples, &mut pose3d_idx, t) {
+            Some(pose) => pose,
+            None => panic!("No Pose3D samples available"),
+        };
+
         let altitude = match get_closest_altitude(&altitude_samples, &mut altitude_idx, t) {
             Some(z) => z,
             None => panic!("No altitude samples available"),
@@ -585,6 +650,7 @@ fn main() -> opencv::Result<()> {
         let t_start = Instant::now();
         let landmark_set = extractor.extract_features_from_map(
             &map,
+            &pose3d,
             altitude,
         )?;
         let dt_extract_features_s = t_start.elapsed().as_secs_f64();

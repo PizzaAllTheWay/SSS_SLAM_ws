@@ -4,6 +4,45 @@ use nalgebra::Matrix2;
 
 
 
+#[derive(Clone, Debug, Default)]
+pub struct Position {
+    // Position in meters (ENU or chosen navigation frame)
+    pub x: f64,
+    pub y: f64,
+
+    // Vertical position in meters (depth or altitude depending on frame convention)
+    // NOTE: define clearly in system (e.g. positive up or down)
+    pub z: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Orientation {
+    // Orientation in radians
+    pub roll: f64,
+    pub pitch: f64,
+    pub yaw: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Pose3D {
+    pub position: Position,
+    pub orientation: Orientation,
+}
+impl Default for Pose3D {
+    fn default() -> Self {
+        Self {
+            position: Position::default(),
+            orientation: Orientation::default(),
+        }
+    }
+}
+impl Pose3D {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Pose2DMap {
     // Position in pixels on the map
     pub x: i64, // [pixel]
