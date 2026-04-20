@@ -1,4 +1,3 @@
-// TODO: Fix these importas later not now man
 use opencv::imgproc;
 use opencv::prelude::*;
 use opencv::core::{
@@ -17,7 +16,6 @@ use super::types::*;
 
 
 pub struct FeatureExtractor {
-    // TODO: Rewrite later
     // Image filter parameters
     // Bilateral filter parameters used for edge preserving smoothing of the map image.
     // These control the filtering configuration used to reduce local noise and speckle
@@ -51,6 +49,17 @@ pub struct FeatureExtractor {
     alpha_r: f64,
     alpha_theta: f64,
 
+    // Shadow estimation parameters.
+    // `shadow_area_min_ratio` sets the minimum allowed shadow area relative to the landmark area,
+    // which helps reject tiny dark blobs that are more likely noise than a real shadow.
+    // `shadow_area_max_ratio` sets the maximum allowed shadow area relative to the landmark area,
+    // which helps reject overly large dark regions that likely belong to background or other structures.
+    // `shadow_threshold_bias` shifts the locally estimated shadow threshold darker or brighter,
+    // letting the shadow extraction be tuned to be either more strict or more permissive.
+    shadow_area_min_ratio: f64,
+    shadow_area_max_ratio: f64,
+    shadow_threshold_bias: f64,
+
     // ? NOTE: `map_offset_yaw` is currently applied as a fixed alignment correction
     // ? between the pose yaw convention and the map/sonar ground-plane convention.
     // ? This works for the current setup, but ideally the underlying frame definition
@@ -80,6 +89,10 @@ impl FeatureExtractor {
         alpha_r: f64,
         alpha_theta: f64,
 
+        shadow_area_min_ratio: f64,
+        shadow_area_max_ratio: f64,
+        shadow_threshold_bias: f64,
+
         map_offset_yaw: f64,
     ) -> Self {
         // Diameter must be at least 1 for bilateral filtering.
@@ -102,6 +115,10 @@ impl FeatureExtractor {
             alpha_r,
             alpha_theta,
 
+            shadow_area_min_ratio,
+            shadow_area_max_ratio,
+            shadow_threshold_bias,
+
             map_offset_yaw,
 
             filtered_image: Mat::default(),
@@ -109,7 +126,11 @@ impl FeatureExtractor {
         }
     }
 
-    // TODO: Explain what the function does
+    // Main feature extraction pipeline for map.
+    // It converts the map into an image, cleans it, segments likely landmark regions,
+    // and labels those regions as candidate landmarks.
+    // For each detected landmark it then estimates measurement, uncertainty, height,
+    // and appearance/geometry descriptors, and returns the final LandmarkSet for later SLAM use.
     pub fn extract_features_from_map(
         &mut self,
         map: &Map,
@@ -164,16 +185,21 @@ impl FeatureExtractor {
         );
 
         // Estimate Landmark Height ----------
-        // TODO: Short explanation
+        // Estimate each landmarks shadow length from the filtered image
+        // and convert that into a rough physical height estimate.
         _estimate_landmark_height(
             &map,
+            altitude,
             &self.filtered_image,
             &mut landmark_set,
-            altitude,
+            self.shadow_area_min_ratio,
+            self.shadow_area_max_ratio,
+            self.shadow_threshold_bias,
         );
 
         // Landmark Descriptor ----------
-        // TODO: Short explanation
+        // Compute appearance and geometry descriptors for each landmark
+        // so they can be used later for matching and classification in SLAM.
         _update_landmark_descriptors(
             &input_image,
             &mut landmark_set,
@@ -913,45 +939,67 @@ fn _calculate_landmark_measurement_uncertainty(
 
 
 // Height Estimation Functions (START) --------------------------------------------------
-// TODO:
-// !!! Also clean up functions here
-
-
-
-// TODO: Explain functions jesjes
+// Estimates a rough physical height for each detected landmark using its sonar shadow.
+//
+// Big picture:
+// after landmarks have already been segmented and labeled, we try to recover one extra
+// geometric cue: object height. For each landmark we first estimate the length of its
+// associated dark shadow region in the filtered sonar image, then combine that shadow
+// length with the vehicle altitude to produce a rough height estimate.
+//
+// Important:
+// this is only a weak approximation. It assumes simplified flat-ground shadow geometry,
+// so the result is useful as an extra descriptor/cue, not as a precise height measurement.
 fn _estimate_landmark_height(
     map: &Map,
+    altitude: f64,
     filtered_image: &Mat,
     landmark_set: &mut LandmarkSet,
-    altitude: f64,
+    shadow_area_min_ratio: f64,
+    shadow_area_max_ratio: f64,
+    shadow_threshold_bias: f64,
 ) {
     for landmark in landmark_set.landmarks.values_mut() {
         let estimated_shadow_length = _estimate_landmark_shadow_length(
             filtered_image,
             landmark,
             map.resolution,
+            shadow_area_min_ratio,
+            shadow_area_max_ratio,
+            shadow_threshold_bias,
         );
 
-        // TODO:
-        // let estimated_height = _calculate_landmark_height(
-        //     estimated_shadow_length,
-        //     altitude,
-        // );
+        let estimated_height = _calculate_landmark_height(
+            estimated_shadow_length,
+            altitude,
+        );
 
-        //landmark.estimated_height = estimated_height;
-        // TODO
-        // ! TESTING REMOVE LATER
-        //landmark.estimated_height = estimated_shadow_length;
-        landmark.estimated_height = estimated_shadow_length;
+        landmark.estimated_height = estimated_height;
     }
 }
 
+// Estimates the physical shadow length for one landmark by deriving a local
+// darkness threshold from the landmark ROI, thresholding the full filtered image,
+// and then labeling dark connected components as possible shadow candidates.
+// The candidate whose size is reasonable and whose centroid is closest to the
+// landmark is selected as the most likely shadow, and its spatial extent is
+// converted from pixels to meters using the map resolution.
+#[allow(non_snake_case)]
 fn _estimate_landmark_shadow_length(
     filtered_image: &Mat,
     landmark: &mut Landmark,
     resolution: f64,
+    shadow_area_min_ratio: f64,
+    shadow_area_max_ratio: f64,
+    shadow_threshold_bias: f64,
 ) -> f64 {
-    // TODO: Explain later no time now
+    // Extract the landmark bounding-box region from the filtered image so we only work
+    // on the local neighborhood of this one object instead of the full map.
+    // Then use the landmark mask to measure only the object pixels inside that ROI,
+    // which avoids background / empty pixels corrupting the intensity statistics.
+    // From those masked object pixels we get the local min and max intensity and place
+    // the threshold at their midpoint, with an optional bias to shift it slightly darker
+    // or brighter depending on how aggressively we want to capture the shadow.
     let roi = Rect::new(
         landmark.bounding_box.x,
         landmark.bounding_box.y,
@@ -980,15 +1028,8 @@ fn _estimate_landmark_shadow_length(
     if I_max <= I_min {
         return 0.0;
     }
-
-    // TODO TUne thsi boi
-    let threshold_bias = -5.0; // tune: 3.0, 5.0, 8.0, 10.0
-    let otsu_threshold = (0.5 * (I_min + I_max) + threshold_bias).max(0.0);
-
-
-    // !!!! DEbugg
-    // TODO: REMOVE
-    println!("threshold: {:.3}", otsu_threshold);
+    
+    let otsu_threshold = (0.5 * (I_min + I_max) + shadow_threshold_bias).max(0.0);
 
     // We now apply that locally estimated threshold to the whole filtered image.
     // This gives a global dark-region mask, but tuned using the landmark local ROI.
@@ -1032,11 +1073,6 @@ fn _estimate_landmark_shadow_length(
     // Here we require the shadow candidate to be at least some fraction
     // of the landmark segmented area. In addition if the shadow exceeds a certain
     // area proportion of landmark, that means it cant be landmarks shadow and is also pruned
-    // TODO: TUNE THIS 
-    // 0.33
-    // 0.03 works fine
-    let shadow_area_min_ratio = 0.03; // !!!! TUNE
-    let shadow_area_max_ratio = 1.50; // !!!! TUNE
     let landmark_area = landmark.d.weak.area as f64;
     let shadow_area_min = shadow_area_min_ratio * landmark_area;
     let shadow_area_max = shadow_area_max_ratio * landmark_area;
@@ -1131,19 +1167,47 @@ fn _estimate_landmark_shadow_length(
     return estimated_shadow_length;
 }
 
-// TODO: Explain that thsi is a extremely iffy shit
-// Liek teh stimate here asumes flat gorund AND that flat-ground similar-triangles approximation
-// WIthsc in reality its not but it is an estimate at least
+// Estimates landmark height from shadow length using a very rough flat-ground
+// similar-triangles approximation.
+//
+// Important:
+// this estimate is quite iffy and should only be treated as a weak geometric cue,
+// not as a physically reliable height measurement.
+//
+// Why it is only approximate:
+// - it assumes the seafloor / ground is locally flat
+// - it assumes the shadow is cast on that flat ground without terrain variation
+// - it assumes a simple 2D similar-triangles geometry
+// - it ignores many real effects such as sonar/viewing geometry, grazing angle changes,
+//   vehicle motion, local slope, rough surface structure, and shadow distortion
+//
+// Intuition:
+// if the vehicle altitude is H and the observed shadow length is L,
+// then under this simplified geometry the object height h can be approximated
+// from similar triangles. Rearranging that relation gives
+//
+//     h = (H * L) / (H + L)
+//
+// where:
+// - H = vehicle altitude above the ground
+// - L = estimated shadow length
+// - h = estimated landmark height
+//
+// Behavior:
+// - returns 0.0 if the inputs are invalid
+// - otherwise returns a rough height estimate in the same length unit
+//   as altitude and shadow length
 fn _calculate_landmark_height(
     estimated_shadow_length: f64,
     altitude: f64,
 ) -> f64 {
+    // Invalid or degenerate geometry gives no meaningful estimate.
     if altitude <= 0.0 || estimated_shadow_length <= 0.0 {
         return 0.0;
     }
 
-    let estimated_height = altitude * estimated_shadow_length
-        / (altitude + estimated_shadow_length);
+    // Very rough flat-ground similar-triangles estimate.
+    let estimated_height = (altitude * estimated_shadow_length)/(altitude + estimated_shadow_length);
 
     return estimated_height;
 }
@@ -1152,7 +1216,22 @@ fn _calculate_landmark_height(
 
 
 // Landmark Descriptor Functions (START) --------------------------------------------------
-// TODO: Explain functions
+// Updates the descriptor set for every detected landmark by extracting each landmark's
+// local image patch and computing appearance-based summary features from that region.
+// In the bigger picture, this is the stage where a segmented and measured landmark is
+// enriched with descriptor information so it becomes more useful for later matching,
+// association, filtering, or classification instead of being only a blob with geometry.
+//
+// For each landmark, the function first extracts the ROI (Region Of Interest) defined by its bounding box.
+// That ROI is then reused by all descriptor helpers so every descriptor is computed
+// from the exact same local image content. If the ROI cannot be extracted, the landmark
+// descriptors are safely reset to defaults and the function moves on to the next landmark.
+//
+// The produced descriptors are split into two groups. The strong descriptors capture
+// the internal appearance and texture statistics of the landmark, while the weak
+// descriptors capture simpler geometric and low-level properties already available
+// from earlier pipeline stages together with a basic gradient-based cue. This gives
+// each landmark a compact but richer description for downstream use.
 fn _update_landmark_descriptors(
     image: &Mat,
     landmark_set: &mut LandmarkSet,
@@ -1190,6 +1269,9 @@ fn _update_landmark_descriptors(
     }
 }
 
+// Computes the stronger appearance descriptors for one landmark from its local image patch.
+// These descriptors summarize the landmark intensity distribution and texture content
+// using mean intensity, spread, contrast, and entropy inside the masked landmark region.
 fn _get_landmark_descriptors_strong(
     image_roi: &BoxedRef<'_, Mat>,
     landmark: &mut Landmark,
@@ -1226,6 +1308,9 @@ fn _get_landmark_descriptors_strong(
     return d;
 }
 
+// Computes the average grayscale intensity of the landmark pixels only.
+// The mask ensures that only pixels belonging to the labeled landmark
+// contribute to the mean, while surrounding background is ignored.
 fn _get_landmark_descriptor_mean(
     image_roi: &BoxedRef<'_, Mat>,
     bounding_box: &BoundingBox,
@@ -1239,6 +1324,9 @@ fn _get_landmark_descriptor_mean(
     return mean_scalar[0];
 }
 
+// Computes the intensity standard deviation inside the masked landmark region.
+// This measures how spread out the landmark pixel intensities are around the mean,
+// so larger values indicate more internal variation in brightness.
 fn _get_landmark_descriptor_std(
     image_roi: &BoxedRef<'_, Mat>,
     bounding_box: &BoundingBox,
@@ -1274,6 +1362,9 @@ fn _get_landmark_descriptor_std(
     return std;
 }
 
+// Computes a simple normalized contrast measure from the masked landmark pixels.
+// It uses the minimum and maximum landmark intensities, so higher contrast means
+// the landmark contains a stronger dark-to-bright intensity span.
 #[allow(non_snake_case)]
 fn _get_landmark_descriptor_contrast(
     image_roi: &BoxedRef<'_, Mat>,
@@ -1300,6 +1391,9 @@ fn _get_landmark_descriptor_contrast(
     return contrast;
 }
 
+// Computes the Shannon entropy of the landmark intensity distribution.
+// A histogram is built only from masked landmark pixels, and the entropy measures
+// how varied or complex the landmark texture is across its grayscale values.
 #[allow(non_snake_case)]
 fn _get_landmark_descriptor_entropy(
     image_roi: &BoxedRef<'_, Mat>,
@@ -1354,6 +1448,9 @@ fn _get_landmark_descriptor_entropy(
     return entropy;
 }
 
+// Computes the weaker geometric/low-level descriptors for one landmark.
+// Most of these values already come from earlier pipeline stages, and this function
+// mainly gathers them together while also adding the average internal gradient strength.
 fn _get_landmark_descriptors_weak(
     image_roi: &BoxedRef<'_, Mat>,
     landmark: &mut Landmark,
@@ -1379,6 +1476,9 @@ fn _get_landmark_descriptors_weak(
     return d;
 }
 
+// Computes the average gradient magnitude inside the masked landmark region.
+// Sobel derivatives are used to measure local intensity changes, so this descriptor
+// captures how strong the internal edges and transitions are within the landmark.
 #[allow(non_snake_case)]
 fn _get_landmark_descriptor_gradient(
     image_roi: &BoxedRef<'_, Mat>,

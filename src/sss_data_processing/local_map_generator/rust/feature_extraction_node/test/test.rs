@@ -445,6 +445,44 @@ fn main() -> opencv::Result<()> {
     let alpha_r = 0.025;
     let alpha_theta = 0.005;
 
+    // Landmark height/shadow estimation settings.
+    // These parameters control how the landmark shadow is selected from the dark connected components,
+    // which directly affects the later height estimate. Since the height is computed from the estimated
+    // shadow length, bad shadow selection gives bad height estimation, so these three parameters mainly
+    // decide how permissive or strict the shadow matching is.
+    //
+    // `shadow_area_min_ratio` is the minimum allowed shadow area relative to the landmark area.
+    // If a dark component is smaller than this fraction of the landmark size, it is rejected as too small,
+    // since it is more likely to be speckle, noise, or a tiny local dark patch instead of a true shadow.
+    // Larger values make this stricter and reject more small candidates.
+    // Smaller values make it more permissive and allow weaker or shorter shadows to survive.
+    //
+    // `shadow_area_max_ratio` is the maximum allowed shadow area relative to the landmark area.
+    // If a dark component is larger than this fraction of the landmark size, it is rejected as too large,
+    // since it is more likely to belong to background darkness, large terrain structure, or merged dark regions
+    // rather than the shadow cast by this one landmark.
+    // Larger values make this more permissive and allow bigger shadow candidates.
+    // Smaller values make it stricter and reject large dark blobs more aggressively.
+    //
+    // `shadow_threshold_bias` shifts the locally estimated shadow threshold before thresholding the full image.
+    // This parameter is mainly used to relax or tighten how easily pixels are allowed to become part of the shadow mask.
+    // More negative values lower the threshold and therefore relax the shadow requirement,
+    // so more pixels can pass and be classified as shadow.
+    // More positive values raise the threshold and therefore make the shadow requirement stricter,
+    // so fewer pixels are accepted as shadow.
+    // In practice:
+    // if many landmarks fail to get a shadow length and return height 0,
+    // try decreasing this value to make shadow selection more permissive.
+    //
+    // In short:
+    // larger  `shadow_area_min_ratio` -> reject more small shadow blobs
+    // larger  `shadow_area_max_ratio` -> allow larger shadow blobs
+    // larger  `shadow_threshold_bias` -> stricter shadow selection
+    // smaller `shadow_threshold_bias` -> more permissive shadow selection
+    let shadow_area_min_ratio = 0.03;
+    let shadow_area_max_ratio = 1.50;
+    let shadow_threshold_bias = -5.0;
+
     // ? NOTE:
     // ? Temporary yaw alignment correction used during map generation.
     // ? The current pose yaw convention and the map/sonar ground-plane convention
@@ -469,6 +507,10 @@ fn main() -> opencv::Result<()> {
         sigma_theta,
         alpha_r,
         alpha_theta,
+
+        shadow_area_min_ratio,
+        shadow_area_max_ratio,
+        shadow_threshold_bias,
 
         map_offset_yaw,
     );

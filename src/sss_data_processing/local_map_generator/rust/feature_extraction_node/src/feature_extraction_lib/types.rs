@@ -121,6 +121,7 @@ pub struct BoundingBox {
 // - `d` stores descriptors for matching/classification later
 // - `centroid` stores the geometric center of the labeled landmark region in image coordinates.
 // - `bounding_box` stores where the landmark lives in the segmented image
+// - `estimated_height` stores a rough landmark height estimate derived later from shadow geometry
 #[derive(Debug, Clone)]
 #[allow(non_snake_case)]
 pub struct Landmark {
