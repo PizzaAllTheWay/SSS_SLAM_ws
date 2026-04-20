@@ -451,6 +451,15 @@ fn main() -> opencv::Result<()> {
     // shadow length, bad shadow selection gives bad height estimation, so these three parameters mainly
     // decide how permissive or strict the shadow matching is.
     //
+    // This stage is also one of the more expensive parts of the feature extraction pipeline.
+    // In earlier testing/profiling it consumed close to 40% of the total runtime of this function,
+    // mainly because each landmark requires extra thresholding, connected-components labeling,
+    // candidate filtering, and shadow-extent measurement over image regions. Because of that,
+    // height estimation is made optional with `height_estimation_enabled`.
+    // So if SLAM or other parts of teh software stack don't require landmark height
+    // and if compute budget is strict, this part can be omitted by setting
+    // `height_estimation_enabled` to `false`
+    //
     // `shadow_area_min_ratio` is the minimum allowed shadow area relative to the landmark area.
     // If a dark component is smaller than this fraction of the landmark size, it is rejected as too small,
     // since it is more likely to be speckle, noise, or a tiny local dark patch instead of a true shadow.
@@ -479,6 +488,7 @@ fn main() -> opencv::Result<()> {
     // larger  `shadow_area_max_ratio` -> allow larger shadow blobs
     // larger  `shadow_threshold_bias` -> stricter shadow selection
     // smaller `shadow_threshold_bias` -> more permissive shadow selection
+    let height_estimation_enabled = true;
     let shadow_area_min_ratio = 0.03;
     let shadow_area_max_ratio = 1.50;
     let shadow_threshold_bias = -5.0;
@@ -508,6 +518,7 @@ fn main() -> opencv::Result<()> {
         alpha_r,
         alpha_theta,
 
+        height_estimation_enabled,
         shadow_area_min_ratio,
         shadow_area_max_ratio,
         shadow_threshold_bias,

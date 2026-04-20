@@ -50,12 +50,18 @@ pub struct FeatureExtractor {
     alpha_theta: f64,
 
     // Shadow estimation parameters.
+    // `height_estimation_enabled` enables or disables the landmark height estimation stage.
+    // This stage is relatively compute heavy and can take a large share of the total runtime,
+    // while the estimated height is only a secondary/weak descriptor and not a critical output.
+    // Because of that, it can be useful to disable this step when runtime is more important than height cues.
+    //
     // `shadow_area_min_ratio` sets the minimum allowed shadow area relative to the landmark area,
     // which helps reject tiny dark blobs that are more likely noise than a real shadow.
     // `shadow_area_max_ratio` sets the maximum allowed shadow area relative to the landmark area,
     // which helps reject overly large dark regions that likely belong to background or other structures.
     // `shadow_threshold_bias` shifts the locally estimated shadow threshold darker or brighter,
     // letting the shadow extraction be tuned to be either more strict or more permissive.
+    height_estimation_enabled: bool,
     shadow_area_min_ratio: f64,
     shadow_area_max_ratio: f64,
     shadow_threshold_bias: f64,
@@ -89,6 +95,7 @@ impl FeatureExtractor {
         alpha_r: f64,
         alpha_theta: f64,
 
+        height_estimation_enabled: bool,
         shadow_area_min_ratio: f64,
         shadow_area_max_ratio: f64,
         shadow_threshold_bias: f64,
@@ -115,6 +122,7 @@ impl FeatureExtractor {
             alpha_r,
             alpha_theta,
 
+            height_estimation_enabled,
             shadow_area_min_ratio,
             shadow_area_max_ratio,
             shadow_threshold_bias,
@@ -187,15 +195,18 @@ impl FeatureExtractor {
         // Estimate Landmark Height ----------
         // Estimate each landmarks shadow length from the filtered image
         // and convert that into a rough physical height estimate.
-        _estimate_landmark_height(
-            &map,
-            altitude,
-            &self.filtered_image,
-            &mut landmark_set,
-            self.shadow_area_min_ratio,
-            self.shadow_area_max_ratio,
-            self.shadow_threshold_bias,
-        );
+        // This step is optional because it is relatively expensive and the height is only a weak descriptor.
+        if self.height_estimation_enabled {
+            _estimate_landmark_height(
+                &map,
+                altitude,
+                &self.filtered_image,
+                &mut landmark_set,
+                self.shadow_area_min_ratio,
+                self.shadow_area_max_ratio,
+                self.shadow_threshold_bias,
+            );
+        }
 
         // Landmark Descriptor ----------
         // Compute appearance and geometry descriptors for each landmark
