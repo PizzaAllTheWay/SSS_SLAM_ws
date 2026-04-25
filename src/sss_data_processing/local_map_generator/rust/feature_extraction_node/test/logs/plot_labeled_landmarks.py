@@ -20,5 +20,5 @@ if __name__ == "__main__":
     plot_segmented_and_labeled(
         segmented_df,
         landmark_df,
-        title="Landmark Measurements",
+        title="Labelled Segments",
     )

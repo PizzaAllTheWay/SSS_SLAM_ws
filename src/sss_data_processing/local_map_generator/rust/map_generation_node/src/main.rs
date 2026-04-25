@@ -23,14 +23,18 @@ use r2r::{
     QosProfile,
     Publisher,
     std_msgs::msg::Header,
+    marine_acoustic_msgs::msg::Dvl, 
     geometry_msgs::msg::PoseStamped,
     geometry_msgs::msg::PolygonStamped,
     marine_acoustic_msgs::msg::RawSonarImage,
+    geometry_msgs::msg::PointStamped,
+    geometry_msgs::msg::Point,
     sensor_msgs::msg::Image,
     
 };
 // Libraries for Map Generation  ----------
 use map_generation_node::map_generation_lib::types::{
+    AltitudeMeasurement,
     GeometricCorrection,
     Orientation,
     Pose3D,
@@ -42,6 +46,7 @@ use map_generation_node::map_generation_lib::types::{
 use map_generation_node::map_generation_lib::generator::MapGenerator;
 use map_generation_node::map_generation_lib::utils::{
     LoggerPerformance,
+    LoggerMapAltitude,
     LoggerMapPose,
     LoggerMapOrigin,
     LoggerMap,
@@ -54,6 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize ROS2 (START) --------------------------------------------------
     // Shared variables ----------
     // Subscribers
+    let altitude_shared = Arc::new(RwLock::new(AltitudeMeasurement {
+        value: 0.0,
+    }));
     let pose_shared = Arc::new(RwLock::new(
         Pose3D {
             position: Position {
@@ -100,8 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parameters ----------
     #[allow(non_snake_case)]
-    // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
-    let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
+    let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+    // ! TRUE LOG ! let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
     
     let map_update_every_n_swaths = node.get_parameter::<i64>("local_map_generator.map_update_every_n_swaths").ok().unwrap_or(0) as usize;
     let map_update_max_time_gap = node.get_parameter::<f64>("local_map_generator.map_update_max_time_gap").ok().unwrap_or(0.0);
@@ -224,11 +232,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )));
 
     // Subscribers ----------
+    let sub_dvl = node.subscribe::<Dvl>("/hardware/dvl", QosProfile::default())?;
     let sub_swath_pose = node.subscribe::<PoseStamped>("/sss_slam/data_processing/swath/pose", QosProfile::default())?;
     let sub_geometric_correction = node.subscribe::<PolygonStamped>("/sss_slam/data_processing/swath/geometric_correction", QosProfile::default())?;
     let sub_swath_processed = node.subscribe::<RawSonarImage>("/sss_slam/data_processing/swath/processed", QosProfile::default())?;
 
     // Publishers ----------
+    let pub_map_altitude = node.create_publisher::<PointStamped>("/sss_slam/data_processing/map_generation/altitude", QosProfile::default())?;
     let pub_map_pose = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/map_generation/pose", QosProfile::default())?;
     let pub_map_origin = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/map_generation/map_origin", QosProfile::default())?;
     let pub_map = node.create_publisher::<Image>("/sss_slam/data_processing/map_generation/map", QosProfile::default())?;
@@ -236,6 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Loggers ----------
     // If logging is enabled, these logger instances are created and used for data logging
     let logger_performance_shared = Arc::new(RwLock::new(if LOG { Some(LoggerPerformance::new()) } else { None }));
+    let logger_map_altitude_shared = Arc::new(RwLock::new(if LOG { Some(LoggerMapAltitude::new()) } else { None }));
     let logger_map_pose_shared = Arc::new(RwLock::new(if LOG { Some(LoggerMapPose::new()) } else { None }));
     let logger_map_origin_shared = Arc::new(RwLock::new(if LOG { Some(LoggerMapOrigin::new()) } else { None }));
     let logger_map_shared = Arc::new(RwLock::new(if LOG { Some(LoggerMap::new()) } else { None }));
@@ -247,6 +258,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spin ----------
     let handle = tokio::task::spawn_blocking(move || loop {
         node.spin_once(std::time::Duration::from_millis(10));
+    });
+
+    // DVL ----------
+    let altitude_clone = altitude_shared.clone();
+
+    let dvl_task = sub_dvl.for_each({
+        move |msg| {
+            // Ensure we only process relevant DVL data
+            // DVL outputs multiple modes (e.g. water-track, bottom-track) and configurations
+            // We only accept bottom-track measurements from a standard piston (Janus) DVL
+            // since those correspond to seabed-referenced measurements used for altitude and 
+            // sound speed under water
+            if msg.velocity_mode != Dvl::DVL_MODE_BOTTOM as u8 {
+                return future::ready(());
+            }
+            if msg.dvl_type != Dvl::DVL_TYPE_PISTON as u8 {
+                return future::ready(());
+            }
+
+            // Altitude
+            // When beam ranges are valid and at least one beam is good, the DVL provides
+            // a seabed-referenced altitude estimate. This is the primary quantity used
+            // for swath processing (e.g. height above seabed for correct projection).
+            if msg.beam_ranges_valid && msg.num_good_beams > 0 {
+                let mut altitude = altitude_clone.write().unwrap();
+                altitude.value = msg.altitude;
+            }
+
+            return future::ready(());
+        }
     });
 
     // Swath Pose ----------
@@ -297,6 +338,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Swath Processed ----------
+    let altitude_clone = altitude_shared.clone();
     let pose_clone = pose_shared.clone();
     let geometric_clone = geometric_correction_shared.clone();
 
@@ -305,11 +347,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let map_generator_clone = map_generator_shared.clone();
 
+    let pub_map_altitude_clone = pub_map_altitude.clone();
     let pub_map_pose_clone = pub_map_pose.clone();
     let pub_map_origin_clone = pub_map_origin.clone();
     let pub_map_clone = pub_map.clone();
 
     let logger_performance_clone = logger_performance_shared.clone();
+    let logger_map_altitude_clone = logger_map_altitude_shared.clone();
     let logger_map_pose_clone = logger_map_pose_shared.clone();
     let logger_map_origin_clone = logger_map_origin_shared.clone();
     let logger_map_clone = logger_map_shared.clone();
@@ -402,15 +446,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 publish_map(
+                    &altitude_clone,
                     &map_generator_clone,
                     &pose_clone,
 
                     &msg.header,
+                    &pub_map_altitude_clone,
                     &pub_map_pose_clone,
                     &pub_map_origin_clone,
                     &pub_map_clone,
 
                     &logger_performance_clone,
+                    &logger_map_altitude_clone,
                     &logger_map_pose_clone,
                     &logger_map_origin_clone,
                     &logger_map_clone,
@@ -433,16 +480,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This timer exists as a fallback: if swaths stop arriving before that count
     // is reached, the timer detects that the latest swath timestamp has stopped
     // changing and forces a map publish from the latest buffered map state.
+    let altitude_clone = altitude_shared.clone();
     let last_map_header_clone = last_map_header_shared.clone();
     let last_map_pose_clone = last_map_pose_shared.clone();
 
     let map_generator_clone = map_generator_shared.clone();
 
+    let pub_map_altitude_clone = pub_map_altitude.clone();
     let pub_map_pose_clone = pub_map_pose.clone();
     let pub_map_origin_clone = pub_map_origin.clone();
     let pub_map_clone = pub_map.clone();
 
     let logger_performance_clone = logger_performance_shared.clone();
+    let logger_map_altitude_clone = logger_map_altitude_shared.clone();
     let logger_map_pose_clone = logger_map_pose_shared.clone();
     let logger_map_origin_clone = logger_map_origin_shared.clone();
     let logger_map_clone = logger_map_shared.clone();
@@ -488,15 +538,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 publish_map(
+                    &altitude_clone,
                     &map_generator_clone,
                     &last_map_pose_clone,
 
                     &last_map_header,
+                    &pub_map_altitude_clone,
                     &pub_map_pose_clone,
                     &pub_map_origin_clone,
                     &pub_map_clone,
 
                     &logger_performance_clone,
+                    &logger_map_altitude_clone,
                     &logger_map_pose_clone,
                     &logger_map_origin_clone,
                     &logger_map_clone,
@@ -512,7 +565,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     // ROS2 (START) --------------------------------------------------
-    let (_, _, _, timer_result) = tokio::join!(
+    let (_, _, _, _, timer_result) = tokio::join!(
+        dvl_task,
         swath_pose_task,
         geometric_task,
         swath_processed_task,
@@ -531,20 +585,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // Helper Functions (START) --------------------------------------------------
 fn publish_map(
+    map_altitude_shared: &Arc<RwLock<AltitudeMeasurement>>,
     map_generator_shared: &Arc<RwLock<MapGenerator>>,
     map_pose_shared: &Arc<RwLock<Pose3D>>,
 
     header: &Header,
+    pub_map_altitude: &Publisher<PointStamped>,
     pub_map_pose: &Publisher<PoseStamped>,
     pub_map_origin: &Publisher<PoseStamped>,
     pub_map: &Publisher<Image>,
 
     logger_performance_shared: &Arc<RwLock<Option<LoggerPerformance>>>,
+    logger_map_altitude_shared: &Arc<RwLock<Option<LoggerMapAltitude>>>,
     logger_map_pose_shared: &Arc<RwLock<Option<LoggerMapPose>>>,
     logger_map_origin_shared: &Arc<RwLock<Option<LoggerMapOrigin>>>,
     logger_map_shared: &Arc<RwLock<Option<LoggerMap>>>,
 ) {
     // Calculate ----------
+    // Get altitude shared variable
+    let altitude = map_altitude_shared.read().unwrap().clone();
+
     // Get pose shared variable
     let pose = map_pose_shared.read().unwrap().clone();
 
@@ -561,6 +621,21 @@ fn publish_map(
     }
 
     // Publish ----------
+    // Altitude
+    // point = (x, y, z)
+    // Only care about z, ie distance to the ground from the drone (Altitude)
+    let mut altitude_msg = PointStamped::default();
+    altitude_msg.header.stamp = header.stamp.clone();
+    altitude_msg.header.frame_id = "base_link".to_string();
+
+    altitude_msg.point = Point {
+        x: 0.0,
+        y: 0.0,
+        z: altitude.value,
+    };
+
+    let _ = pub_map_altitude.publish(&altitude_msg);
+
     // Pose
     let mut pose_msg = PoseStamped::default();
     pose_msg.header.stamp = header.stamp.clone();
@@ -622,6 +697,9 @@ fn publish_map(
 
     if let Some(l) = &mut *logger_performance_shared.write().unwrap() {
         l.stop(t);
+    }
+    if let Some(l) = &mut *logger_map_altitude_shared.write().unwrap() {
+        l.log(t, altitude.value);
     }
     if let Some(l) = &mut *logger_map_pose_shared.write().unwrap() {
         l.log(t, &pose);

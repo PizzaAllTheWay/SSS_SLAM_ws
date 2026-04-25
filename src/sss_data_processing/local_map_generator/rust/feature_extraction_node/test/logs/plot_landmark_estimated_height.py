@@ -20,5 +20,5 @@ if __name__ == "__main__":
     plot_landmark_height(
         filtered_df,
         landmark_df,
-        title="Landmark Descriptors",
+        title="Map",
     )

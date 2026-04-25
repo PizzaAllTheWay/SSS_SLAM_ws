@@ -20,11 +20,20 @@ These topics are subscribed to by `swath_processing_node`. The state estimate pr
 
 **Intermediate Topics**
 
+!!!!!
+// TODO: SHoudl explain in more detail each topic an dhow it is structured
+AT least soem of them no nee dfo rall but some definitely
+geometric_correction
+altitude
+map_origin
+!!!!!
+
 ```text
 /sss_slam/data_processing/swath/pose                  [geometry_msgs/PoseStamped]
 /sss_slam/data_processing/swath/geometric_correction  [geometry_msgs/PolygonStamped]
 /sss_slam/data_processing/swath/processed             [marine_acoustic_msgs/RawSonarImage]
 
+/sss_slam/data_processing/map_generation/altitude     [geometry_msgs/PointStamped]
 /sss_slam/data_processing/map_generation/pose         [geometry_msgs/PoseStamped]
 /sss_slam/data_processing/map_generation/map_origin   [geometry_msgs/PoseStamped]
 /sss_slam/data_processing/map_generation/map          [sensor_msgs/Image]

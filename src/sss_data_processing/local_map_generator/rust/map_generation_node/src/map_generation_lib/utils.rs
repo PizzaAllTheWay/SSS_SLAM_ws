@@ -84,6 +84,26 @@ impl LoggerPerformance {
     }
 }
 
+// ---------- MAP ALTITUDE ----------
+pub struct LoggerMapAltitude {
+    logger: Logger,
+}
+
+impl LoggerMapAltitude {
+    pub fn new() -> Self {
+        Self {
+            logger: Logger::new(
+                "altitude",
+                &["t", "altitude"],
+            )
+        }
+    }
+
+    pub fn log(&mut self, t: f64, altitude: f64) {
+        self.logger.log((t, altitude));
+    }
+}
+
 // ---------- MAP POSE ----------
 pub struct LoggerMapPose {
     logger: Logger,

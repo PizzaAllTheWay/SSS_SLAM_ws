@@ -349,7 +349,7 @@ def plot_segmented_and_labeled(segmented_df, landmark_df, title="Before/After"):
 # PLOT FOR Measurements ----------
 def _random_color_from_id(label_id):
     rng = np.random.default_rng(int(label_id))
-    return tuple(rng.uniform(0.15, 0.95, size=3))
+    return tuple(rng.uniform(0.05, 0.65, size=3))
 
 def _image_extent_m(row):
     resolution = float(row["resolution"])
@@ -838,20 +838,24 @@ def _draw_descriptor_space(ax, landmark_rows):
         label_id = int(row["label_id"])
         color = _random_color_from_id(label_id)
 
+        marker_size = 70 + 180 * uniqueness[i]
+        text_offset = (marker_size**0.5)/2 + 3
+
         ax.scatter(
             coords[i, 0],
             coords[i, 1],
-            s=70 + 180 * uniqueness[i],
+            s=marker_size,
             color=color,
             edgecolors="black",
             linewidths=0.8,
             alpha=0.85,
         )
 
-        ax.text(
-            coords[i, 0],
-            coords[i, 1],
-            f" {label_id}",
+        ax.annotate(
+            f"{label_id}",
+            xy=(coords[i, 0], coords[i, 1]),
+            xytext=(text_offset, 0),
+            textcoords="offset points",
             fontsize=9,
             color="black",
             ha="left",

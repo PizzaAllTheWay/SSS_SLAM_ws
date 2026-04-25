@@ -7,6 +7,12 @@ use rustc_hash::FxHashMap;
 
 
 #[derive(Clone)]
+pub struct AltitudeMeasurement {
+    // Distance to seabed / surface in meters
+    pub value: f64,
+}
+
+#[derive(Clone)]
 pub struct Position {
     // Position in meters (ENU or chosen navigation frame)
     pub x: f64,
