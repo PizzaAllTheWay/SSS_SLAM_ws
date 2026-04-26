@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib import cm
 from matplotlib.widgets import Slider
 import matplotlib.patches as patches
+import textwrap
 
 
 
@@ -603,15 +604,19 @@ def _draw_landmark_id_and_height_m(ax, row, resolution):
     y_m = float(row["bbox_y"]) * resolution
 
     height_txt = "nan"
-    if "height" in row and pd.notna(row["height"]):
-        height_txt = f"{float(row['height']):.2f} m"
+    if "height_value" in row and pd.notna(row["height_value"]):
+        height_txt = f"{float(row['height_value']):.2f}"
+
+    std_txt = "nan"
+    if "height_std" in row and pd.notna(row["height_std"]):
+        std_txt = f"{float(row['height_std']):.2f}"
 
     color = _random_color_from_id(label_id)
 
     ax.text(
         x_m,
         max(y_m - 0.35 * resolution, 0.0),
-        f"ID {label_id}, h={height_txt}",
+        f"ID {label_id}, h={height_txt} ± {std_txt} m",
         color=color,
         fontsize=8,
         ha="left",
@@ -723,7 +728,8 @@ def _get_descriptor_columns(df):
         "area",
         "weak_polar_r",
         "weak_polar_theta",
-        "height",
+        "height_value",
+        "height_std",
         "radial_intensity_gradient",
     ]
     return [c for c in cols if c in df.columns]
@@ -875,12 +881,14 @@ def _draw_descriptor_space(ax, landmark_rows):
 
     # Small helper text so you know what this plot means.
     used_txt = ", ".join(used_cols)
+    used_txt_wrapped = "\n".join(textwrap.wrap(used_txt, width=45))
+
     ax.text(
         0.02,
         0.98,
         "Distance in this space = descriptor difference\n"
         "Bigger marker = more unique vs nearest landmark\n"
-        f"Used: {used_txt}",
+        f"Used: {used_txt_wrapped}",
         transform=ax.transAxes,
         ha="left",
         va="top",

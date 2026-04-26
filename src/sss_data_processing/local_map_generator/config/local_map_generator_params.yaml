@@ -43,7 +43,7 @@
       # So this is a tuning problem
       # Recommend to tune this to 1x - 10x sonar resolution 
       # Going over 10x sonar resolution will start to degrade map details
-      map_resolution: 0.03
+      map_resolution: 0.03 # [m/pixel]
 
       # Chunk size in pixels per direction for the sparse chunked map.
       #
@@ -116,6 +116,168 @@
 
 
 
+      # Feature Extraction (START) -------------------------------------------------
+      # Bilateral filter settings.
+      # These parameters control how strongly the image is smoothed while still trying to preserve edges.
+      # The bilateral filter does not only look at how close pixels are in space, but also at how similar they are in intensity. 
+      # This makes it useful when reducing speckle or small noise while keeping sharper boundaries, transitions, and object edges more visible.
+      #
+      # `filter_d` is the diameter of the local neighborhood in pixels.
+      # Larger values use a bigger neighborhood, which gives stronger smoothing but costs more runtime.
+      # Smaller values keep the filtering more local and usually preserve more fine detail.
+      #
+      # `filter_sigma_color` controls how much pixels with different intensity values are allowed to mix.
+      # Larger values allow more blending across intensity differences, giving stronger smoothing but weaker edge preservation.
+      # Smaller values preserve edges more strongly, but also reduce the denoising effect.
+      #
+      # `filter_sigma_space` controls how far away neighboring pixels can still influence the result.
+      # Larger values spread the smoothing over a wider area.
+      # Smaller values keep the smoothing tighter and more local.
+      #
+      # In short:
+      # larger values -> stronger smoothing, less noise, more detail loss, weaker edge preservation
+      # smaller values -> weaker smoothing, more noise left, better detail and edge preservation
+      filter_d:              31 # [pixel]
+      filter_sigma_color:  80.0
+      filter_sigma_space: 100.0
+
+      # Semantic segmentation settings.
+      # These parameters control how local bright/shadow candidates are found,
+      # and how strict the later semantic support check is.
+      #
+      # `local_window_size` is the size of the local area used to compute the mean intensity around each pixel.
+      # Larger values make the local mean more global and smoother, which reduces noise sensitivity
+      # but can miss small local structures. Smaller values make the method more sensitive to local changes,
+      # but also more sensitive to noise and speckles.
+      #
+      # `local_offset` is how much brighter or darker a pixel must be than its local mean
+      # to be marked as a bright or shadow candidate.
+      # Larger values make the threshold stricter, so fewer pixels are accepted.
+      # Smaller values make it easier for pixels to become candidates, which increases sensitivity
+      # but can also create more false positives.
+      #
+      # `search_radius` is the radius of the neighborhood used when checking whether
+      # bright and shadow candidates support each other.
+      # Larger values allow support from farther away pixels, which can preserve bigger object-shadow patterns
+      # but may also connect unrelated regions. Smaller values make the support check more local and strict.
+      #
+      # `min_support` is the minimum number of nearby opposite-class pixels required
+      # for a candidate pixel to survive the semantic filtering.
+      # Larger values give stricter pruning and remove more isolated noise,
+      # while smaller values keep more candidates but also let more weak or noisy regions survive.
+      #
+      # In short:
+      # larger `local_window_size` -> more global behavior
+      # larger `local_offset` -> stricter candidate detection
+      # larger `search_radius` -> wider support search
+      # larger `min_support` -> stricter semantic pruning
+      local_window_size:  51 # [pixel]
+      local_offset:      3.3
+      search_radius:      21 # [pixel]
+      min_support:       100 # [pixel]
+
+      # Minimum landmark area in pixels.
+      # This is a final size-based pruning step applied after segmentation and labeling.
+      #
+      # Even if the segmentation is mostly good, some small leftover blobs, speckles,
+      # or broken fragments can still survive and appear as separate labeled regions.
+      # This threshold removes those by requiring a landmark to contain at least this many pixels.
+      #
+      # Larger values make the pruning stricter and keep only bigger landmark regions.
+      # Smaller values keep more landmarks, but also allow more small noisy segments through.
+      landmark_area_min: 5000 # [pixel]
+
+      # Landmark measurement uncertainty settings.
+      # These parameters define the base uncertainty in landmark range/bearing,
+      # and how that uncertainty grows as the landmark gets farther away.
+      #
+      # `sigma_r` is the base range standard deviation [m].
+      # Larger values mean the measured landmark distance is trusted less overall.
+      # Smaller values mean the range measurement is trusted more.
+      # Recommended: same or bigger than map resolution
+      #
+      # `sigma_theta` is the base bearing standard deviation [deg].
+      # Larger values mean the measured landmark angle is trusted less overall.
+      # Smaller values mean the bearing measurement is trusted more.
+      #
+      # `alpha_r` controls how strongly range uncertainty increases with distance.
+      # Larger values make far landmarks much less certain in range.
+      # Smaller values keep range uncertainty more constant over distance.
+      #
+      # `alpha_theta` controls how strongly bearing uncertainty increases with distance.
+      # Larger values make far landmarks much less certain in angle.
+      # Smaller values keep bearing uncertainty more constant over distance.
+      sigma_r:     0.030 # [m]
+      sigma_theta: 0.400 # [deg]
+      alpha_r:     0.025
+      alpha_theta: 0.005
+
+      # Landmark height/shadow estimation settings.
+      # These parameters control how the landmark shadow is selected from the dark connected components,
+      # which directly affects the later height estimate. Since the height is computed from the estimated
+      # shadow length, bad shadow selection gives bad height estimation, so these three parameters mainly
+      # decide how permissive or strict the shadow matching is.
+      #
+      # This stage is also one of the more expensive parts of the feature extraction pipeline.
+      # In earlier testing/profiling it consumed close to 40% of the total runtime of this function,
+      # mainly because each landmark requires extra thresholding, connected-components labeling,
+      # candidate filtering, and shadow-extent measurement over image regions. Because of that,
+      # height estimation is made optional with `height_estimation_enabled`.
+      # So if SLAM or other parts of teh software stack don't require landmark height
+      # and if compute budget is strict, this part can be omitted by setting
+      # `height_estimation_enabled` to `false`
+      #
+      # `shadow_area_min_ratio` is the minimum allowed shadow area relative to the landmark area.
+      # If a dark component is smaller than this fraction of the landmark size, it is rejected as too small,
+      # since it is more likely to be speckle, noise, or a tiny local dark patch instead of a true shadow.
+      # Larger values make this stricter and reject more small candidates.
+      # Smaller values make it more permissive and allow weaker or shorter shadows to survive.
+      #
+      # `shadow_area_max_ratio` is the maximum allowed shadow area relative to the landmark area.
+      # If a dark component is larger than this fraction of the landmark size, it is rejected as too large,
+      # since it is more likely to belong to background darkness, large terrain structure, or merged dark regions
+      # rather than the shadow cast by this one landmark.
+      # Larger values make this more permissive and allow bigger shadow candidates.
+      # Smaller values make it stricter and reject large dark blobs more aggressively.
+      #
+      # `shadow_threshold_bias` shifts the locally estimated shadow threshold before thresholding the full image.
+      # This parameter is mainly used to relax or tighten how easily pixels are allowed to become part of the shadow mask.
+      # More negative values lower the threshold and therefore relax the shadow requirement,
+      # so more pixels can pass and be classified as shadow.
+      # More positive values raise the threshold and therefore make the shadow requirement stricter,
+      # so fewer pixels are accepted as shadow.
+      # In practice:
+      # if many landmarks fail to get a shadow length and return height 0,
+      # try decreasing this value to make shadow selection more permissive.
+      #
+      # `alpha_height_estimate` controls how much confidence/weight is given to the estimated landmark height.
+      # The height estimate is based on simplified sonar shadow geometry, so it should not always be treated
+      # as equally reliable as direct geometric measurements. This parameter acts as a tunable uncertainty scale
+      # for the height estimate.
+      # Smaller values mean higher confidence in the height estimation algorithm.
+      # This gives the estimated height more influence later, because the assumed uncertainty is lower.
+      # Larger values mean lower confidence in the height estimation algorithm.
+      # This makes the estimated height weaker/less trusted later, because the assumed uncertainty is higher.
+      # In practice, this should be tuned based on how stable the detected shadows are:
+      # if the shadow matching looks clean and repeatable, this value can be reduced.
+      # if the shadows are noisy, missing, or often attached to wrong dark regions, this value should be increased.
+      #
+      # In short:
+      # larger  `shadow_area_min_ratio` -> reject more small shadow blobs
+      # larger  `shadow_area_max_ratio` -> allow larger shadow blobs
+      # larger  `shadow_threshold_bias` -> stricter shadow selection
+      # smaller `shadow_threshold_bias` -> more permissive shadow selection
+      # smaller `alpha_height_estimate` -> more confidence in estimated height
+      # larger  `alpha_height_estimate` -> less confidence in estimated height
+      height_estimation_enabled:   true
+      shadow_area_min_ratio:      0.030
+      shadow_area_max_ratio:      1.500
+      shadow_threshold_bias:     -2.500 # [intensity]
+      alpha_height_estimate:      0.038
+      # Feature Extraction (STOP) -------------------------------------------------
+
+
+
       # Side Scan Sonar (START) --------------------------------------------------
       # Sonar transducer configuration for each channel.
       # Each transducer block defines how that physical sonar head is mounted and how
@@ -156,8 +318,8 @@
               z:  0.033
             orientation:
               # Mounting rotation in body frame [deg]
-              roll:  25.0
-              pitch: 0.0
+              roll:   25.0
+              pitch:   0.0
               yaw:   180.0
           # Maximum sonar transducer slant range [m]
           max_range: 30.0
@@ -179,8 +341,8 @@
             orientation:
               # Mounting rotation in body frame [deg]
               roll:  25.0
-              pitch: 0.0
-              yaw:   0.0
+              pitch:  0.0
+              yaw:    0.0
           # Maximum sonar transducer slant range [m]
           max_range: 30.0
           # Transducer beam geometry [deg]

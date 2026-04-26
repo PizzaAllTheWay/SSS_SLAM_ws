@@ -6,6 +6,10 @@ import numpy as np
 import yaml
 from matplotlib import cm
 import json
+import matplotlib.patches as patches
+import colorsys
+from matplotlib.textpath import TextPath
+from matplotlib.patches import PathPatch, Rectangle
 
 
 
@@ -14,7 +18,7 @@ def load_local_map_generator_params(config_path):
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
 
-    params = data["/**"]["ros__parameters"]["local_map_generator"]
+    params = data["/**"]["ros__parimport colorsysameters"]["local_map_generator"]
 
     return {
         "max_range": params["max_range"],
@@ -40,6 +44,7 @@ def build_performance_timeline(
     t_stop,
     gap_threshold=5.0,
     zero_dt=None,
+    zero_hold_threshold=None,
 ):
     df = df.copy().sort_values("t").reset_index(drop=True)
     df = df[(df["t"] >= t_start) & (df["t"] <= t_stop)].reset_index(drop=True)
@@ -52,27 +57,46 @@ def build_performance_timeline(
         dt_valid = dt[dt > 0]
         zero_dt = np.median(dt_valid) if len(dt_valid) > 0 else 0.1
 
+    fill_threshold = gap_threshold if zero_hold_threshold is None else zero_hold_threshold
+
     rows = []
     dropout_spans = []
 
+    def add_zero_rows(t0, t1, include_start, include_stop):
+        start_i = 0 if include_start else 1
+        stop_extra = 1 if include_stop else 0
+
+        n_fill = int(np.floor((t1 - t0) / zero_dt)) - 1 + stop_extra
+
+        if n_fill <= 0:
+            return
+
+        fill_times = t0 + zero_dt * np.arange(start_i, n_fill + 1)
+
+        for tf in fill_times:
+            if tf <= t0 and not include_start:
+                continue
+            if tf >= t1 and not include_stop:
+                break
+            if tf > t1:
+                break
+
+            rows.append({
+                "t": tf,
+                "runtime_s": 0.0,
+                "cpu_percent": 0.0,
+                "ram_mb": 0.0,
+                "is_artificial": True,
+            })
+
     first_t = df["t"].iloc[0]
-    if first_t - t_start > gap_threshold:
+    first_gap = first_t - t_start
+
+    if first_gap > gap_threshold:
         dropout_spans.append((t_start, first_t))
 
-        n_fill = int(np.floor((first_t - t_start) / zero_dt))
-        if n_fill > 0:
-            fill_times = t_start + zero_dt * np.arange(0, n_fill + 1)
-
-            for tf in fill_times:
-                if tf >= first_t:
-                    break
-                rows.append({
-                    "t": tf,
-                    "runtime_s": 0.0,
-                    "cpu_percent": 0.0,
-                    "ram_mb": 0.0,
-                    "is_artificial": True,
-                })
+    if first_gap > fill_threshold:
+        add_zero_rows(t_start, first_t, include_start=True, include_stop=False)
 
     for i in range(len(df) - 1):
         row = df.iloc[i].to_dict()
@@ -86,43 +110,21 @@ def build_performance_timeline(
         if dt_gap > gap_threshold:
             dropout_spans.append((t0, t1))
 
-            n_fill = int(np.floor(dt_gap / zero_dt)) - 1
-            if n_fill > 0:
-                fill_times = t0 + zero_dt * np.arange(1, n_fill + 1)
-
-                for tf in fill_times:
-                    if tf >= t1:
-                        break
-                    rows.append({
-                        "t": tf,
-                        "runtime_s": 0.0,
-                        "cpu_percent": 0.0,
-                        "ram_mb": 0.0,
-                        "is_artificial": True,
-                    })
+        if dt_gap > fill_threshold:
+            add_zero_rows(t0, t1, include_start=False, include_stop=False)
 
     last_row = df.iloc[-1].to_dict()
     last_row["is_artificial"] = False
     rows.append(last_row)
 
     last_t = df["t"].iloc[-1]
-    if t_stop - last_t > gap_threshold:
+    last_gap = t_stop - last_t
+
+    if last_gap > gap_threshold:
         dropout_spans.append((last_t, t_stop))
 
-        n_fill = int(np.floor((t_stop - last_t) / zero_dt))
-        if n_fill > 0:
-            fill_times = last_t + zero_dt * np.arange(1, n_fill + 1)
-
-            for tf in fill_times:
-                if tf > t_stop:
-                    break
-                rows.append({
-                    "t": tf,
-                    "runtime_s": 0.0,
-                    "cpu_percent": 0.0,
-                    "ram_mb": 0.0,
-                    "is_artificial": True,
-                })
+    if last_gap > fill_threshold:
+        add_zero_rows(last_t, t_stop, include_start=False, include_stop=True)
 
     out = pd.DataFrame(rows)
     out = out.sort_values("t").reset_index(drop=True)
@@ -861,4 +863,659 @@ def plot_saved_full_map_mosaic(
     ax.axis("equal")
     ax.grid(False)
     ax.legend()
+    plt.show()
+
+# LANDMARKS ----------
+def filter_time_window(df, t_start=None, t_stop=None):
+    df = df.copy().sort_values("t").reset_index(drop=True)
+
+    if t_start is not None:
+        df = df[df["t"] > t_start]
+
+    if t_stop is not None:
+        df = df[df["t"] <= t_stop]
+
+    return df.reset_index(drop=True)
+
+
+def build_and_save_partial_map_mosaic_from_time_window(
+    map_df,
+    map_origin_df,
+    map_pose_df,
+    out_dir,
+    t_start,
+    t_stop,
+    mosaic_name="mission_partial",
+    stride=1,
+    pixel_stride=1,
+):
+    map_df = filter_time_window(map_df, t_start, t_stop)
+
+    if len(map_df) == 0:
+        raise ValueError("No map samples inside selected time window")
+
+    return build_and_save_full_map_mosaic(
+        map_df=map_df,
+        map_origin_df=map_origin_df,
+        map_pose_df=map_pose_df,
+        out_dir=out_dir,
+        mosaic_name=mosaic_name,
+        stride=stride,
+        pixel_stride=pixel_stride,
+    )
+
+
+def _rot2(yaw):
+    c = np.cos(yaw)
+    s = np.sin(yaw)
+
+    return np.array([
+        [c, -s],
+        [s,  c],
+    ], dtype=float)
+
+
+def _polar_measurement_to_pose_xy(r, theta, yaw_offset=0.0):
+    angle = theta + yaw_offset
+
+    return np.array([
+        r * np.cos(angle),
+        r * np.sin(angle),
+    ], dtype=float)
+
+
+def _pose_xy_to_world_xy(pose_x, pose_y, pose_yaw, local_xy):
+    pose_xy = np.array([pose_x, pose_y], dtype=float)
+    return pose_xy + _rot2(pose_yaw) @ local_xy
+
+
+def _polar_covariance_to_world_xy(row, yaw_offset=0.0):
+    pose_yaw = float(row["pose_yaw"])
+    r = float(row["z_r"])
+    theta = float(row["z_theta"])
+
+    angle_world = pose_yaw + theta + yaw_offset
+
+    R_polar = np.array([
+        [float(row["R_z_rr"]),     float(row["R_z_rtheta"])],
+        [float(row["R_z_thetar"]), float(row["R_z_thetatheta"])],
+    ], dtype=float)
+
+    J = np.array([
+        [np.cos(angle_world), -r * np.sin(angle_world)],
+        [np.sin(angle_world),  r * np.cos(angle_world)],
+    ], dtype=float)
+
+    return J @ R_polar @ J.T
+
+
+def _pose_color_from_index(pose_index):
+    # Darker, vivid colors only.
+    # Avoids white, yellow, light green, and other washed-out tones.
+    palette = [
+        (0.80, 0.15, 0.15),  # dark red
+        (0.15, 0.35, 0.80),  # dark blue
+        (0.45, 0.15, 0.75),  # purple
+        (0.00, 0.55, 0.65),  # teal
+        (0.75, 0.15, 0.55),  # magenta
+        (0.80, 0.30, 0.10),  # burnt orange
+        (0.25, 0.20, 0.65),  # indigo
+        (0.65, 0.10, 0.35),  # wine
+        (0.10, 0.45, 0.35),  # dark turquoise
+        (0.55, 0.10, 0.10),  # deep red
+    ]
+
+    return palette[int(pose_index) % len(palette)]
+
+
+def prepare_pose_plot_df(feature_pose_df, map_pose_df=None):
+    if map_pose_df is not None:
+        pose_plot_df = map_pose_df[["t", "x", "y", "yaw"]].copy()
+    else:
+        pose_plot_df = feature_pose_df[["t", "x", "y", "yaw"]].copy()
+
+    pose_plot_df = pose_plot_df.sort_values("t").reset_index(drop=True)
+    pose_plot_df["pose_index"] = np.arange(len(pose_plot_df))
+
+    return pose_plot_df
+
+
+def attach_map_origin_and_pose_to_landmarks(matched_df, map_origin_df, map_pose_df):
+    if map_origin_df is None or map_pose_df is None:
+        return matched_df
+
+    out = matched_df.copy().sort_values("t").reset_index(drop=True)
+
+    origin_df = (
+        map_origin_df[["t", "x", "y"]]
+        .copy()
+        .sort_values("t")
+        .rename(columns={"x": "origin_x_px", "y": "origin_y_px"})
+        .reset_index(drop=True)
+    )
+
+    map_pose_small_df = (
+        map_pose_df[["t", "x", "y", "yaw"]]
+        .copy()
+        .sort_values("t")
+        .rename(columns={"x": "map_pose_x", "y": "map_pose_y", "yaw": "map_pose_yaw"})
+        .reset_index(drop=True)
+    )
+
+    out = pd.merge_asof(
+        out.sort_values("t"),
+        origin_df.sort_values("t"),
+        on="t",
+        direction="nearest",
+    )
+
+    out = pd.merge_asof(
+        out.sort_values("t"),
+        map_pose_small_df.sort_values("t"),
+        on="t",
+        direction="nearest",
+    )
+
+    return out.dropna(
+        subset=["origin_x_px", "origin_y_px", "map_pose_x", "map_pose_y"]
+    ).reset_index(drop=True)
+
+
+def match_landmarks_to_feature_poses(
+    landmark_df,
+    feature_pose_df,
+    tolerance=None,
+    time_decimals=6,
+):
+    landmark_df = landmark_df.copy().sort_values("t").reset_index(drop=True)
+    feature_pose_df = feature_pose_df.copy().sort_values("t").reset_index(drop=True)
+
+    if "pose_index" not in feature_pose_df.columns:
+        feature_pose_df["pose_index"] = np.arange(len(feature_pose_df))
+
+    required_pose_cols = ["t", "x", "y", "yaw", "pose_index"]
+    missing = [c for c in required_pose_cols if c not in feature_pose_df.columns]
+    if missing:
+        raise ValueError(f"feature_pose_df missing columns: {missing}")
+
+    keep_cols = [
+        "t",
+        "x",
+        "y",
+        "yaw",
+        "pose_index",
+        "origin_x_px",
+        "origin_y_px",
+        "map_pose_x",
+        "map_pose_y",
+        "map_pose_yaw",
+    ]
+    keep_cols = [c for c in keep_cols if c in feature_pose_df.columns]
+
+    pose_df = feature_pose_df[keep_cols].copy().rename(columns={
+        "x": "pose_x",
+        "y": "pose_y",
+        "yaw": "pose_yaw",
+    })
+
+    landmark_df["t_key"] = landmark_df["t"].round(time_decimals)
+    pose_df["t_key"] = pose_df["t"].round(time_decimals)
+
+    matched = landmark_df.merge(
+        pose_df.drop(columns=["t"]),
+        on="t_key",
+        how="left",
+    ).drop(columns=["t_key"])
+
+    missing_mask = matched[["pose_x", "pose_y", "pose_yaw", "pose_index"]].isna().any(axis=1)
+
+    if missing_mask.any():
+        if tolerance is None:
+            dt = np.diff(feature_pose_df["t"].to_numpy(dtype=float))
+            dt_valid = dt[dt > 0]
+            tolerance = 0.5 * np.median(dt_valid) if len(dt_valid) > 0 else 0.05
+
+        unmatched = landmark_df.loc[missing_mask].drop(columns=["t_key"]).copy()
+
+        fallback = pd.merge_asof(
+            unmatched.sort_values("t"),
+            pose_df.drop(columns=["t_key"]).sort_values("t"),
+            on="t",
+            direction="nearest",
+            tolerance=tolerance,
+        )
+
+        fill_cols = [c for c in fallback.columns if c != "t" and c in matched.columns]
+        matched.loc[missing_mask, fill_cols] = fallback[fill_cols].to_numpy()
+
+    return matched.dropna(
+        subset=["pose_x", "pose_y", "pose_yaw", "pose_index"]
+    ).reset_index(drop=True)
+
+
+def landmark_measurement_to_world(row, yaw_offset=0.0, resolution=None):
+    if (
+        resolution is not None
+        and "cx" in row
+        and "cy" in row
+        and "origin_x_px" in row
+        and "origin_y_px" in row
+        and "map_pose_x" in row
+        and "map_pose_y" in row
+        and not pd.isna(row["origin_x_px"])
+        and not pd.isna(row["origin_y_px"])
+        and not pd.isna(row["map_pose_x"])
+        and not pd.isna(row["map_pose_y"])
+    ):
+        lm_x = float(row["map_pose_x"]) + (float(row["cx"]) - float(row["origin_x_px"])) * float(resolution)
+        lm_y = float(row["map_pose_y"]) + (float(row["cy"]) - float(row["origin_y_px"])) * float(resolution)
+        return lm_x, lm_y
+
+    pose_x = float(row["pose_x"])
+    pose_y = float(row["pose_y"])
+    pose_yaw = float(row["pose_yaw"])
+
+    r = float(row["z_r"])
+    theta = float(row["z_theta"])
+
+    local_xy = _polar_measurement_to_pose_xy(r, theta, yaw_offset)
+    world_xy = _pose_xy_to_world_xy(pose_x, pose_y, pose_yaw, local_xy)
+
+    return float(world_xy[0]), float(world_xy[1])
+
+
+def _draw_world_landmark_measurement_line(
+    ax,
+    row,
+    yaw_offset=0.0,
+    resolution=None,
+    linewidth=0.9,
+    alpha=0.85,
+):
+    pose_x = float(row["pose_x"])
+    pose_y = float(row["pose_y"])
+
+    lm_x, lm_y = landmark_measurement_to_world(
+        row,
+        yaw_offset=yaw_offset,
+        resolution=resolution,
+    )
+
+    color = _pose_color_from_index(row["pose_index"])
+
+    ax.plot(
+        [pose_x, lm_x],
+        [pose_y, lm_y],
+        linewidth=linewidth,
+        color=color,
+        alpha=alpha,
+        zorder=3,
+    )
+
+    return lm_x, lm_y, color
+
+
+def _draw_world_landmark_covariance_ellipse(
+    ax,
+    row,
+    yaw_offset=0.0,
+    resolution=None,
+    n_sigma=2.0,
+    color=None,
+):
+    lm_x, lm_y = landmark_measurement_to_world(
+        row,
+        yaw_offset=yaw_offset,
+        resolution=resolution,
+    )
+
+    if (
+        resolution is not None
+        and "origin_x_px" in row
+        and "origin_y_px" in row
+        and "map_pose_x" in row
+        and "map_pose_y" in row
+        and not pd.isna(row["origin_x_px"])
+        and not pd.isna(row["origin_y_px"])
+    ):
+        pose_x = float(row["pose_x"])
+        pose_y = float(row["pose_y"])
+
+        dx = lm_x - pose_x
+        dy = lm_y - pose_y
+
+        r = np.hypot(dx, dy)
+        theta = np.arctan2(dy, dx)
+
+        R_polar = np.array([
+            [float(row["R_z_rr"]),     float(row["R_z_rtheta"])],
+            [float(row["R_z_thetar"]), float(row["R_z_thetatheta"])],
+        ], dtype=float)
+
+        J = np.array([
+            [np.cos(theta), -r * np.sin(theta)],
+            [np.sin(theta),  r * np.cos(theta)],
+        ], dtype=float)
+
+        R_xy = J @ R_polar @ J.T
+    else:
+        R_xy = _polar_covariance_to_world_xy(row, yaw_offset=yaw_offset)
+
+    vals, vecs = np.linalg.eigh(R_xy)
+    vals = np.maximum(vals, 0.0)
+
+    order = np.argsort(vals)[::-1]
+    vals = vals[order]
+    vecs = vecs[:, order]
+
+    angle_deg = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+
+    if color is None:
+        color = _pose_color_from_index(row["pose_index"])
+
+    ellipse = patches.Ellipse(
+        (lm_x, lm_y),
+        width=2.0 * n_sigma * np.sqrt(vals[0]),
+        height=2.0 * n_sigma * np.sqrt(vals[1]),
+        angle=angle_deg,
+        facecolor=(*color[:3], 0.10),
+        edgecolor=(*color[:3], 0.55),
+        linewidth=1.0,
+        zorder=2,
+    )
+
+    ax.add_patch(ellipse)
+
+
+def _plot_mosaic_background(ax, mosaic, meta, cmap_name="copper", zero_color="white"):
+    mosaic_masked = np.ma.masked_where(mosaic == 0, mosaic)
+
+    map_cmap = cm.get_cmap(cmap_name).copy()
+    map_cmap.set_bad(color=zero_color)
+
+    valid = mosaic[mosaic != 0]
+    vmin = np.percentile(valid, 0.05) if len(valid) > 0 else 0
+    vmax = np.percentile(valid, 99) if len(valid) > 0 else 1
+
+    ax.imshow(
+        mosaic_masked,
+        origin="lower",
+        aspect="equal",
+        cmap=map_cmap,
+        interpolation="nearest",
+        vmin=vmin,
+        vmax=vmax,
+        extent=[
+            meta["global_x_min"],
+            meta["global_x_max"],
+            meta["global_y_min"],
+            meta["global_y_max"],
+        ],
+    )
+
+def _plot_feature_poses(
+    ax,
+    pose_plot_df,
+    yaw_offset=0.0,
+    draw_pose_heading=True,
+    path_linewidth=1.0,
+    pose_size=20,
+    arrow_len=1.0,
+    arrow_width=0.002,
+):
+    ax.plot(
+        pose_plot_df["x"],
+        pose_plot_df["y"],
+        linewidth=path_linewidth,
+        color="black",
+        alpha=0.85,
+        label="Robot pose path",
+        zorder=5,
+    )
+
+    ax.scatter(
+        pose_plot_df["x"],
+        pose_plot_df["y"],
+        s=pose_size,
+        color="black",
+        alpha=0.9,
+        label="Robot poses",
+        zorder=6,
+    )
+
+    if not draw_pose_heading:
+        return
+
+    yaw = pose_plot_df["yaw"].to_numpy(dtype=float) + yaw_offset
+
+    ax.quiver(
+        pose_plot_df["x"].to_numpy(dtype=float),
+        pose_plot_df["y"].to_numpy(dtype=float),
+        arrow_len * np.cos(yaw),
+        arrow_len * np.sin(yaw),
+        angles="xy",
+        scale_units="xy",
+        scale=1.0,
+        width=arrow_width,
+        color="black",
+        alpha=0.75,
+        zorder=7,
+    )
+
+def _make_zoom_scaled_text(ax, x, y, label, color, base_fontsize=7, min_fontsize=6, max_fontsize=28):
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    ref_span = max(abs(x1 - x0), abs(y1 - y0))
+
+    text = ax.annotate(
+        label,
+        xy=(x, y),
+        xytext=(3, 3),
+        textcoords="offset points",
+        fontsize=base_fontsize,
+        color=color,
+        zorder=9,
+        bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.0),
+    )
+
+    text._base_fontsize = base_fontsize
+    text._ref_span = ref_span
+    text._min_fontsize = min_fontsize
+    text._max_fontsize = max_fontsize
+
+    return text
+
+
+def _draw_data_scaled_text(
+    ax,
+    x,
+    y,
+    label,
+    color,
+    text_size=0.08,
+    x_offset=0.05,
+    y_offset=0.05,
+    bg_pad=0.025,
+    z_base=20,
+):
+    tx = x + x_offset
+    ty = y + y_offset
+
+    path = TextPath((tx, ty), label, size=text_size)
+    bbox = path.get_extents()
+
+    bg = Rectangle(
+        (bbox.x0 - bg_pad, bbox.y0 - bg_pad),
+        bbox.width + 2.0 * bg_pad,
+        bbox.height + 2.0 * bg_pad,
+        facecolor="white",
+        edgecolor="none",
+        alpha=1.0,
+        zorder=z_base,
+    )
+    ax.add_patch(bg)
+
+    patch = PathPatch(
+        path,
+        facecolor=color,
+        edgecolor="none",
+        zorder=z_base + 0.1,
+    )
+    ax.add_patch(patch)
+
+    return patch
+
+def _plot_landmarks(
+    ax,
+    matched_df,
+    yaw_offset=0.0,
+    resolution=None,
+    draw_covariance=True,
+    label_text_size=0.08,
+):
+    text_patches = []
+
+    for i, (_, row) in enumerate(matched_df.iterrows()):
+        lm_x, lm_y, color = _draw_world_landmark_measurement_line(
+            ax,
+            row,
+            yaw_offset=yaw_offset,
+            resolution=resolution,
+            linewidth=0.9,
+            alpha=0.8,
+        )
+
+        if draw_covariance:
+            _draw_world_landmark_covariance_ellipse(
+                ax,
+                row,
+                yaw_offset=yaw_offset,
+                resolution=resolution,
+                n_sigma=2.0,
+                color=color,
+            )
+
+        ax.scatter(
+            lm_x,
+            lm_y,
+            s=20,
+            color=color,
+            edgecolors="black",
+            linewidths=0.4,
+            zorder=8,
+        )
+
+        h_hat = float(row["height_value"]) if "height_value" in row and not pd.isna(row["height_value"]) else None
+        h_std = float(row["height_std"]) if "height_std" in row and not pd.isna(row["height_std"]) else None
+
+        if h_hat is not None and h_std is not None:
+            label = f"ĥ = {h_hat:.2f} ± {h_std:.2f} m"
+        elif h_hat is not None:
+            label = f"ĥ = {h_hat:.2f} m"
+        else:
+            label = f"{int(row['label_id'])}"
+
+        z_base = 20 + 2 * i
+
+        text_patch = _draw_data_scaled_text(
+            ax,
+            lm_x,
+            lm_y,
+            label,
+            color,
+            text_size=label_text_size,
+            x_offset=0.05,
+            y_offset=0.05,
+            bg_pad=0.025,
+            z_base=z_base,
+        )
+
+        text_patches.append(text_patch)
+
+    return text_patches
+
+
+def plot_saved_partial_mosaic_with_feature_poses_and_landmarks(
+    meta_path,
+    feature_pose_df,
+    landmark_df,
+    map_origin_df=None,
+    map_pose_df=None,
+    t_start=None,
+    t_stop=None,
+    title="Partial Map with Feature Poses and Landmarks",
+    yaw_offset=0.0,
+    cmap_name="copper",
+    zero_color="white",
+    draw_pose_heading=True,
+    draw_covariance=True,
+    label_text_size=0.6,
+):
+    feature_pose_df = filter_time_window(feature_pose_df, t_start, t_stop)
+    landmark_df = filter_time_window(landmark_df, t_start, t_stop)
+
+    if len(feature_pose_df) == 0:
+        raise ValueError("No feature pose samples inside selected time window")
+    if len(landmark_df) == 0:
+        raise ValueError("No landmark samples inside selected time window")
+
+    mosaic, meta = load_full_map_mosaic(meta_path)
+    resolution = float(meta.get("resolution", meta.get("map_resolution", 1.0)))
+
+    if map_origin_df is not None:
+        map_origin_df = filter_time_window(map_origin_df, t_start, t_stop)
+
+    if map_pose_df is not None:
+        map_pose_df = filter_time_window(map_pose_df, t_start, t_stop)
+
+    pose_plot_df = prepare_pose_plot_df(
+        feature_pose_df=feature_pose_df,
+        map_pose_df=map_pose_df,
+    )
+
+    matched_df = match_landmarks_to_feature_poses(
+        landmark_df=landmark_df,
+        feature_pose_df=pose_plot_df,
+    )
+
+    matched_df = attach_map_origin_and_pose_to_landmarks(
+        matched_df=matched_df,
+        map_origin_df=map_origin_df,
+        map_pose_df=map_pose_df,
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+
+    _plot_mosaic_background(
+        ax,
+        mosaic=mosaic,
+        meta=meta,
+        cmap_name=cmap_name,
+        zero_color=zero_color,
+    )
+
+    _plot_feature_poses(
+        ax,
+        pose_plot_df=pose_plot_df,
+        yaw_offset=yaw_offset,
+        draw_pose_heading=draw_pose_heading,
+    )
+
+    _plot_landmarks(
+        ax,
+        matched_df=matched_df,
+        yaw_offset=yaw_offset,
+        resolution=resolution,
+        draw_covariance=draw_covariance,
+        label_text_size=label_text_size,
+    )
+
+    ax.set_title(title)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_aspect("equal")
+    ax.grid(False)
+
+    plt.tight_layout()
+
     plt.show()

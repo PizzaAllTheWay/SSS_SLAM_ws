@@ -37,4 +37,14 @@ def generate_launch_description():
                 {'log': LaunchConfiguration('log')}
             ]
         ),
+        Node(
+            package='local_map_generator',
+            executable='feature_extraction_node',
+            name='feature_extraction_node',
+            output='screen',
+            parameters=[
+                local_map_generator_config,
+                {'log': LaunchConfiguration('log')}
+            ]
+        ),
     ])

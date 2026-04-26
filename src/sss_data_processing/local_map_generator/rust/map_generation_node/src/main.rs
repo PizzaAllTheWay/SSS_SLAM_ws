@@ -30,7 +30,6 @@ use r2r::{
     geometry_msgs::msg::PointStamped,
     geometry_msgs::msg::Point,
     sensor_msgs::msg::Image,
-    
 };
 // Libraries for Map Generation  ----------
 use map_generation_node::map_generation_lib::types::{
@@ -108,8 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parameters ----------
     #[allow(non_snake_case)]
-    let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
-    // ! TRUE LOG ! let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
+    // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+    let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
     
     let map_update_every_n_swaths = node.get_parameter::<i64>("local_map_generator.map_update_every_n_swaths").ok().unwrap_or(0) as usize;
     let map_update_max_time_gap = node.get_parameter::<f64>("local_map_generator.map_update_max_time_gap").ok().unwrap_or(0.0);
@@ -146,16 +145,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     r2r::log_info!("map_generation_node", "log: {}", LOG);
     r2r::log_info!("map_generation_node", "");
-    r2r::log_info!("map_generation_node", "local_map_generator.map_update_every_n_swaths:   {}",   map_update_every_n_swaths);
-    r2r::log_info!("map_generation_node", "local_map_generator.map_update_max_time_gap:     {}",     map_update_max_time_gap);
-    r2r::log_info!("map_generation_node", "local_map_generator.map_resolution:              {}",              map_resolution);
-    r2r::log_info!("map_generation_node", "local_map_generator.chunk_size:                  {}",                  chunk_size);
-    r2r::log_info!("map_generation_node", "local_map_generator.chunk_max_age:               {}",               chunk_max_age);
-    r2r::log_info!("map_generation_node", "local_map_generator.beam_weight_threshold:       {}",       beam_weight_threshold);
-    r2r::log_info!("map_generation_node", "local_map_generator.probabilistic_map_threshold: {}", probabilistic_map_threshold);
-    r2r::log_info!("map_generation_node", "local_map_generator.fill_inn_min_neighbors:      {}",      fill_inn_min_neighbors);
-    r2r::log_info!("map_generation_node", "local_map_generator.fill_inn_passes:             {}",             fill_inn_passes);
-    r2r::log_info!("map_generation_node", "local_map_generator.map_offset_yaw_deg:          {}",          map_offset_yaw_deg);
+    r2r::log_info!("map_generation_node", "local_map_generator.map_update_every_n_swaths:   {} [swath samples]",   map_update_every_n_swaths);
+    r2r::log_info!("map_generation_node", "local_map_generator.map_update_max_time_gap:     {} [s]            ",     map_update_max_time_gap);
+    r2r::log_info!("map_generation_node", "local_map_generator.map_resolution:              {} [m/pixel]      ",              map_resolution);
+    r2r::log_info!("map_generation_node", "local_map_generator.chunk_size:                  {}                ",                  chunk_size);
+    r2r::log_info!("map_generation_node", "local_map_generator.chunk_max_age:               {}                ",               chunk_max_age);
+    r2r::log_info!("map_generation_node", "local_map_generator.beam_weight_threshold:       {}                ",       beam_weight_threshold);
+    r2r::log_info!("map_generation_node", "local_map_generator.probabilistic_map_threshold: {}                ", probabilistic_map_threshold);
+    r2r::log_info!("map_generation_node", "local_map_generator.fill_inn_min_neighbors:      {}                ",      fill_inn_min_neighbors);
+    r2r::log_info!("map_generation_node", "local_map_generator.fill_inn_passes:             {}                ",             fill_inn_passes);
+    r2r::log_info!("map_generation_node", "local_map_generator.map_offset_yaw_deg:          {} [deg]          ",          map_offset_yaw_deg);
     r2r::log_info!("map_generation_node", "");
     r2r::log_info!("map_generation_node", "local_map_generator.transducers.port.pose.position.x:        {:.4} [m]  ",        transducer_port_pose_position_x);
     r2r::log_info!("map_generation_node", "local_map_generator.transducers.port.pose.position.y:        {:.4} [m]  ",        transducer_port_pose_position_y);
@@ -240,7 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Publishers ----------
     let pub_map_altitude = node.create_publisher::<PointStamped>("/sss_slam/data_processing/map_generation/altitude", QosProfile::default())?;
     let pub_map_pose = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/map_generation/pose", QosProfile::default())?;
-    let pub_map_origin = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/map_generation/map_origin", QosProfile::default())?;
+    let pub_map_origin = node.create_publisher::<PoseStamped>("/sss_slam/data_processing/map_generation/origin", QosProfile::default())?;
     let pub_map = node.create_publisher::<Image>("/sss_slam/data_processing/map_generation/map", QosProfile::default())?;
     
     // Loggers ----------
@@ -333,7 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 geometric_correction.h_stb = msg.polygon.points[1].z as f64;
             }
             
-            future::ready(())
+            return future::ready(());
         }
     });
 
@@ -626,7 +625,7 @@ fn publish_map(
     // Only care about z, ie distance to the ground from the drone (Altitude)
     let mut altitude_msg = PointStamped::default();
     altitude_msg.header.stamp = header.stamp.clone();
-    altitude_msg.header.frame_id = "base_link".to_string();
+    altitude_msg.header.frame_id = "map".to_string();
 
     altitude_msg.point = Point {
         x: 0.0,

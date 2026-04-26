@@ -61,10 +61,13 @@ pub struct FeatureExtractor {
     // which helps reject overly large dark regions that likely belong to background or other structures.
     // `shadow_threshold_bias` shifts the locally estimated shadow threshold darker or brighter,
     // letting the shadow extraction be tuned to be either more strict or more permissive.
+    // `alpha_height_estimate` is a tunable uncertainty/confidence scale for the height estimate, 
+    // where smaller values mean higher confidence and larger values mean lower confidence.
     height_estimation_enabled: bool,
     shadow_area_min_ratio: f64,
     shadow_area_max_ratio: f64,
     shadow_threshold_bias: f64,
+    alpha_height_estimate: f64,
 
     // ? NOTE: `map_offset_yaw` is currently applied as a fixed alignment correction
     // ? between the pose yaw convention and the map/sonar ground-plane convention.
@@ -103,6 +106,7 @@ impl FeatureExtractor {
         shadow_area_min_ratio: f64,
         shadow_area_max_ratio: f64,
         shadow_threshold_bias: f64,
+        alpha_height_estimate: f64,
 
         map_offset_yaw: f64,
     ) -> Self {
@@ -130,6 +134,7 @@ impl FeatureExtractor {
             shadow_area_min_ratio,
             shadow_area_max_ratio,
             shadow_threshold_bias,
+            alpha_height_estimate,
 
             map_offset_yaw,
 
@@ -149,7 +154,7 @@ impl FeatureExtractor {
         &mut self,
         map: &Map,
         pose: &Pose3D,
-        altitude: f64,
+        altitude: &Altitude,
     ) -> opencv::Result<LandmarkSet> {
         // Convert Map into image ----------
         // Convert the project map into an OpenCV image
@@ -214,6 +219,7 @@ impl FeatureExtractor {
                 self.shadow_area_min_ratio,
                 self.shadow_area_max_ratio,
                 self.shadow_threshold_bias,
+                self.alpha_height_estimate,
                 self.map_offset_yaw,
             );
         }
@@ -988,13 +994,14 @@ fn _calculate_landmark_measurement_uncertainty(
 fn _estimate_landmark_height(
     map: &Map,
     pose: &Pose3D,
-    altitude: f64,
+    altitude: &Altitude,
     last_map_pose: &mut Pose3D,
     filtered_image: &Mat,
     landmark_set: &mut LandmarkSet,
     shadow_area_min_ratio: f64,
     shadow_area_max_ratio: f64,
     shadow_threshold_bias: f64,
+    alpha_height_estimate: f64,
     map_offset_yaw: f64,
 ) {
     for landmark in landmark_set.landmarks.values_mut() {
@@ -1027,10 +1034,19 @@ fn _estimate_landmark_height(
         let estimated_height = _calculate_landmark_height(
             estimated_shadow_length,
             estimated_landmark_ground_distance,
-            altitude,
+            altitude.value,
         );
 
-        landmark.estimated_height = estimated_height;
+        let estimated_height_uncertainty = _calculate_landmark_height_uncertainty(
+            estimated_height,
+            estimated_shadow_length,
+            estimated_landmark_ground_distance,
+            altitude.value,
+            alpha_height_estimate,
+        );
+
+        landmark.estimated_height.value = estimated_height;
+        landmark.estimated_height.std = estimated_height_uncertainty;
     }
 
     // Update last pose with current pose now
@@ -1359,6 +1375,59 @@ fn _calculate_landmark_height(
 
     return estimated_height;
 }
+
+// Estimates a simple standard deviation for the shadow-based height estimate.
+//
+// Big picture:
+// this is not a strict physical covariance propagation. The height estimate itself is already
+// only a weak descriptor, so the uncertainty is kept as a practical heuristic. The goal is simply
+// to give later SLAM/matching logic a rough value for how much this height cue should be trusted.
+//
+// The uncertainty starts from the absolute estimated height, so larger estimated objects naturally
+// get larger absolute uncertainty. Then two extra penalties are applied.
+//
+// First, short shadows are treated as less reliable. If the shadow is short, even a small pixel
+// error in the detected shadow length can cause a large relative change in the height estimate.
+// This is represented with `1.0 + 1/L`, so uncertainty grows as shadow length becomes small,
+// but it does not cancel out the height formula.
+//
+// Second, long-range / low-altitude viewing geometry is treated as less reliable. If the estimated
+// landmark ground distance is large compared to the vehicle altitude, the simplified similar-triangle
+// geometry becomes more sensitive to small errors in pose, shadow length, and flat-ground assumptions.
+// This is represented with `1.0 + D/H`.
+//
+// Finally, `alpha_height_estimate` is a tunable confidence scale for the whole height-estimation
+// algorithm. Smaller values mean higher confidence and produce smaller standard deviation.
+// Larger values mean lower confidence and produce larger standard deviation.
+//
+// In short:
+// larger height estimate       -> larger absolute uncertainty
+// shorter shadow length        -> larger uncertainty
+// larger range relative to H   -> larger uncertainty
+// larger alpha_height_estimate -> larger uncertainty
+#[allow(non_snake_case)]
+fn _calculate_landmark_height_uncertainty(
+    estimated_height: f64,
+    estimated_shadow_length: f64,
+    estimated_landmark_ground_distance: f64,
+    altitude: f64,
+    alpha_height_estimate: f64,
+) -> f64 {
+    if estimated_height <= 0.0 || estimated_shadow_length <= 0.0 || altitude <= 0.0 {
+        return f64::INFINITY;
+    }
+
+    let H = altitude;
+    let L = estimated_shadow_length;
+    let D = estimated_landmark_ground_distance.max(0.0);
+
+    let shadow_geometry_factor = 1.0 + (1.0/L.max(1e-6));
+    let range_geometry_factor = 1.0 + (D/H.max(1e-6));
+
+    let std = alpha_height_estimate * estimated_height.abs() * shadow_geometry_factor * range_geometry_factor;
+
+    return std.max(1e-6);
+}
 // Height Estimation Functions (STOP) --------------------------------------------------
 
 
@@ -1617,7 +1686,8 @@ fn _get_landmark_descriptors_weak(
     let d = LandmarkDescriptorsWeak {
         area: landmark.d.weak.area,
         polar_coordinates: landmark.z,
-        height: landmark.estimated_height,
+        height_value: landmark.estimated_height.value,
+        height_std: landmark.estimated_height.std,
         radial_intensity_gradient,
     };
 

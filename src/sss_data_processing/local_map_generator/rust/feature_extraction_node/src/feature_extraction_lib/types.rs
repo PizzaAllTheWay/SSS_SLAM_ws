@@ -4,7 +4,13 @@ use nalgebra::Matrix2;
 
 
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy)]
+pub struct Altitude {
+    // Distance to seabed / surface in meters
+    pub value: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Position {
     // Position in meters (ENU or chosen navigation frame)
     pub x: f64,
@@ -15,7 +21,7 @@ pub struct Position {
     pub z: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Orientation {
     // Orientation in radians
     pub roll: f64,
@@ -23,7 +29,7 @@ pub struct Orientation {
     pub yaw: f64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Pose3D {
     pub position: Position,
     pub orientation: Orientation,
@@ -121,7 +127,8 @@ pub struct LandmarkDescriptorsStrong {
 pub struct LandmarkDescriptorsWeak {
     pub area: i32,
     pub polar_coordinates: LandmarkMeasurement,
-    pub height: f64,
+    pub height_value: f64,
+    pub height_std: f64,
     pub radial_intensity_gradient: f64,
 }
 
@@ -152,6 +159,12 @@ pub struct BoundingBox {
     pub mask: Mat,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct EstimatedHeight {
+    pub value: f64,  // [m]
+    pub std: f64,    // [m]
+}
+
 // Full landmark object.
 //
 // Big picture:
@@ -171,7 +184,7 @@ pub struct Landmark {
     pub centroid: Centroid,
     pub bounding_box: BoundingBox,
 
-    pub estimated_height: f64,
+    pub estimated_height: EstimatedHeight,
 }
 impl Default for Landmark {
     fn default() -> Self {
@@ -181,7 +194,7 @@ impl Default for Landmark {
             d: Default::default(),
             centroid: Default::default(),
             bounding_box: Default::default(),
-            estimated_height: 0.0,
+            estimated_height: Default::default(),
         }
     }
 }

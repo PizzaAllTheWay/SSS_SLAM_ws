@@ -191,6 +191,7 @@ impl LoggerLandmarkSet {
                     "R_z_thetar",
                     "R_z_thetatheta",
                     "estimated_height",
+                    "estimated_height_std",
                     "mean_intensity",
                     "std",
                     "contrast",
@@ -198,7 +199,8 @@ impl LoggerLandmarkSet {
                     "area",
                     "weak_polar_r",
                     "weak_polar_theta",
-                    "height",
+                    "height_value",
+                    "height_std",
                     "radial_intensity_gradient",
                     "mask_width",
                     "mask_height",
@@ -236,7 +238,8 @@ impl LoggerLandmarkSet {
                 landmark.R_z[(0, 1)].to_string(),
                 landmark.R_z[(1, 0)].to_string(),
                 landmark.R_z[(1, 1)].to_string(),
-                landmark.estimated_height.to_string(),
+                landmark.estimated_height.value.to_string(),
+                landmark.estimated_height.std.to_string(),
                 landmark.d.strong.mean_intensity.to_string(),
                 landmark.d.strong.std.to_string(),
                 landmark.d.strong.contrast.to_string(),
@@ -244,7 +247,8 @@ impl LoggerLandmarkSet {
                 landmark.d.weak.area.to_string(),
                 landmark.d.weak.polar_coordinates.r.to_string(),
                 landmark.d.weak.polar_coordinates.theta.to_string(),
-                landmark.d.weak.height.to_string(),
+                landmark.d.weak.height_value.to_string(),
+                landmark.d.weak.height_std.to_string(),
                 landmark.d.weak.radial_intensity_gradient.to_string(),
                 mask_width.to_string(),
                 mask_height.to_string(),
@@ -543,15 +547,30 @@ fn main() -> opencv::Result<()> {
     // if many landmarks fail to get a shadow length and return height 0,
     // try decreasing this value to make shadow selection more permissive.
     //
+    // `alpha_height_estimate` controls how much confidence/weight is given to the estimated landmark height.
+    // The height estimate is based on simplified sonar shadow geometry, so it should not always be treated
+    // as equally reliable as direct geometric measurements. This parameter acts as a tunable uncertainty scale
+    // for the height estimate.
+    // Smaller values mean higher confidence in the height estimation algorithm.
+    // This gives the estimated height more influence later, because the assumed uncertainty is lower.
+    // Larger values mean lower confidence in the height estimation algorithm.
+    // This makes the estimated height weaker/less trusted later, because the assumed uncertainty is higher.
+    // In practice, this should be tuned based on how stable the detected shadows are:
+    // if the shadow matching looks clean and repeatable, this value can be reduced.
+    // if the shadows are noisy, missing, or often attached to wrong dark regions, this value should be increased.
+    //
     // In short:
     // larger  `shadow_area_min_ratio` -> reject more small shadow blobs
     // larger  `shadow_area_max_ratio` -> allow larger shadow blobs
     // larger  `shadow_threshold_bias` -> stricter shadow selection
     // smaller `shadow_threshold_bias` -> more permissive shadow selection
+    // smaller `alpha_height_estimate` -> more confidence in estimated height
+    // larger  `alpha_height_estimate` -> less confidence in estimated height
     let height_estimation_enabled = true;
     let shadow_area_min_ratio = 0.03;
     let shadow_area_max_ratio = 1.50;
     let shadow_threshold_bias = -2.5;
+    let alpha_height_estimate = 0.038;
 
     // ? NOTE:
     // ? Temporary yaw alignment correction used during map generation.
@@ -582,6 +601,7 @@ fn main() -> opencv::Result<()> {
         shadow_area_min_ratio,
         shadow_area_max_ratio,
         shadow_threshold_bias,
+        alpha_height_estimate,
 
         map_offset_yaw,
     );
@@ -641,9 +661,13 @@ fn main() -> opencv::Result<()> {
             None => panic!("No Pose3D samples available"),
         };
 
-        let altitude = match get_closest_altitude(&altitude_samples, &mut altitude_idx, t) {
+        let altitude_value = match get_closest_altitude(&altitude_samples, &mut altitude_idx, t) {
             Some(z) => z,
             None => panic!("No altitude samples available"),
+        };
+
+        let altitude = Altitude {
+            value: altitude_value
         };
 
         // Actual extraction, meat n taters
@@ -651,7 +675,7 @@ fn main() -> opencv::Result<()> {
         let landmark_set = extractor.extract_features_from_map(
             &map,
             &pose3d,
-            altitude,
+            &altitude,
         )?;
         let dt_extract_features_s = t_start.elapsed().as_secs_f64();
 
