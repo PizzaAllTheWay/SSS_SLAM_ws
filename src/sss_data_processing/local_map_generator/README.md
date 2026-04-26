@@ -43,11 +43,48 @@ These are intermediate outputs produced inside the local-map-generation pipeline
 
 **Published Topics**
 
+!!!!!
+// TODO: SHoudl explain in more detail each topic an dhow it is structured
+AT least soem of them no nee dfo rall but some definitely
+landmarks
+!!!!!
+
 ```text
-N/A
+/sss_slam/data_processing/feature_extraction/pose      [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/feature_extraction/landmarks [sensor_msgs/PointCloud2]
 ```
 
 At the current stage, this package publishes intermediate outputs for the internal SLAM processing pipeline rather than a final end-user output topic. The swath-processing outputs feed the map-generation stage, and the map-generation outputs are intended to feed future downstream stages such as feature extraction.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Explain in depth the 
+Also explain the other ones are normal an dconform to stuff already
+But theste dont:
+ALso explain why they dont and why not custom topics (Because they are shit and pain in the ass tp work with)
+(New pc or any pc need to have msg otherwise cat log or olpt or do shit witch is not cool for new peps or laptoms an dshit so je also other eraosns explain them more jesjes)
+- geometric_correction
+- altitude
+- map_origin
+- landmarks
+
+
+
+
+
+
+
+
 
 ---
 
