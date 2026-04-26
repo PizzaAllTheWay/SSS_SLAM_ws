@@ -10,6 +10,7 @@ import matplotlib.patches as patches
 import colorsys
 from matplotlib.textpath import TextPath
 from matplotlib.patches import PathPatch, Rectangle
+import textwrap
 
 
 
@@ -1518,4 +1519,467 @@ def plot_saved_partial_mosaic_with_feature_poses_and_landmarks(
 
     plt.tight_layout()
 
+    plt.show()
+
+# DESCRIPTORS ----------
+def _get_descriptor_columns(df):
+    cols = [
+        "mean_intensity",
+        "std",
+        "contrast",
+        "entropy",
+        "area",
+        "weak_polar_r",
+        "weak_polar_theta",
+        "height_value",
+        "height_std",
+        "radial_intensity_gradient",
+    ]
+    return [c for c in cols if c in df.columns]
+
+
+def load_csv_from_df_time_window(df, t_start=None, t_stop=None):
+    df = df.copy().sort_values("t").reset_index(drop=True)
+
+    if t_start is not None:
+        df = df[df["t"] >= t_start]
+
+    if t_stop is not None:
+        df = df[df["t"] <= t_stop]
+
+    return df.reset_index(drop=True)
+
+
+def _assign_unique_landmark_ids(df):
+    df = df.copy().sort_values(["t", "label_id"]).reset_index(drop=True)
+    df["plot_uid"] = np.arange(1, len(df) + 1)
+    return df
+
+
+def _get_descriptor_matrix(df, descriptor_cols):
+    X = df[descriptor_cols].copy().astype(float)
+
+    keep_cols = []
+    for c in descriptor_cols:
+        values = X[c].to_numpy(dtype=float)
+        finite_mask = np.isfinite(values)
+
+        if not np.any(finite_mask):
+            continue
+
+        if np.nanstd(values[finite_mask]) > 0.0:
+            keep_cols.append(c)
+
+    if len(keep_cols) == 0:
+        return np.zeros((len(df), 2)), []
+
+    X = X[keep_cols].copy()
+
+    for c in keep_cols:
+        col = X[c].to_numpy(dtype=float)
+        finite_mask = np.isfinite(col)
+
+        fill_value = np.nanmean(col[finite_mask]) if np.any(finite_mask) else 0.0
+        col[~finite_mask] = fill_value
+        X[c] = col
+
+    X = X.to_numpy(dtype=float)
+
+    mu = np.mean(X, axis=0)
+    sigma = np.std(X, axis=0)
+    sigma[sigma == 0.0] = 1.0
+
+    return (X - mu) / sigma, keep_cols
+
+
+def _project_descriptors_pca_2d(X):
+    if X.shape[0] == 0:
+        return np.zeros((0, 2)), np.array([0.0, 0.0])
+
+    if X.shape[0] == 1:
+        return np.column_stack([np.zeros(1), np.zeros(1)]), np.array([1.0, 0.0])
+
+    if X.shape[1] == 1:
+        return np.column_stack([X[:, 0], np.zeros(X.shape[0])]), np.array([1.0, 0.0])
+
+    Xc = X - np.mean(X, axis=0, keepdims=True)
+    _, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+    coords = Xc @ Vt[:2].T
+
+    var = (S ** 2) / max(X.shape[0] - 1, 1)
+    total = np.sum(var)
+
+    explained = np.array([
+        var[0] / total if total > 0 else 0.0,
+        var[1] / total if len(var) > 1 and total > 0 else 0.0,
+    ])
+
+    return coords, explained
+
+
+def _compute_descriptor_uniqueness(coords):
+    n = coords.shape[0]
+
+    if n == 0:
+        return np.array([])
+
+    if n == 1:
+        return np.array([0.0])
+
+    dists = np.sqrt(np.sum((coords[:, None, :] - coords[None, :, :]) ** 2, axis=2))
+    np.fill_diagonal(dists, np.inf)
+
+    score = np.min(dists, axis=1)
+    max_score = np.max(score)
+
+    if max_score > 0:
+        score = score / max_score
+
+    return score
+
+
+def _normalize_log_area(area_values):
+    area_values = np.asarray(area_values, dtype=float)
+    area_values = np.where(np.isfinite(area_values), area_values, 0.0)
+    area_values = np.maximum(area_values, 0.0)
+
+    log_area = np.log1p(area_values)
+
+    a_min = np.min(log_area)
+    a_max = np.max(log_area)
+
+    if a_max <= a_min:
+        return np.ones_like(log_area) * 0.5
+
+    return (log_area - a_min) / (a_max - a_min)
+
+
+def _descriptor_region_color(x, y, center_x, center_y, intensity):
+    dx = x - center_x
+    dy = y - center_y
+
+    angle = np.arctan2(dy, dx)
+    hue = (angle + np.pi) / (2.0 * np.pi)
+
+    saturation = 0.35 + 0.60 * intensity
+    value = 0.55 + 0.35 * intensity
+
+    return colorsys.hsv_to_rgb(hue, saturation, value)
+
+
+def _compute_descriptor_plot_data(landmark_rows):
+    descriptor_cols = _get_descriptor_columns(landmark_rows)
+    X, used_cols = _get_descriptor_matrix(landmark_rows, descriptor_cols)
+
+    if X.shape[0] == 0 or len(used_cols) == 0:
+        return None
+
+    coords, explained = _project_descriptors_pca_2d(X)
+    uniqueness = _compute_descriptor_uniqueness(coords)
+
+    if "area" in landmark_rows.columns:
+        area_norm = _normalize_log_area(landmark_rows["area"].to_numpy(dtype=float))
+    else:
+        area_norm = np.ones(len(landmark_rows)) * 0.5
+
+    size_metric = 0.55 * uniqueness + 0.45 * area_norm
+    marker_sizes = 35.0 + 260.0 * size_metric
+
+    center_x = float(np.mean(coords[:, 0]))
+    center_y = float(np.mean(coords[:, 1]))
+
+    colors = []
+    uid_colors = {}
+    uid_sizes = {}
+
+    for i, (_, row) in enumerate(landmark_rows.iterrows()):
+        uid = int(row["plot_uid"])
+        x = coords[i, 0]
+        y = coords[i, 1]
+
+        color = _descriptor_region_color(
+            x=x,
+            y=y,
+            center_x=center_x,
+            center_y=center_y,
+            intensity=size_metric[i],
+        )
+
+        colors.append(color)
+        uid_colors[uid] = color
+        uid_sizes[uid] = marker_sizes[i]
+
+    return {
+        "coords": coords,
+        "explained": explained,
+        "used_cols": used_cols,
+        "size_metric": size_metric,
+        "marker_sizes": marker_sizes,
+        "center_x": center_x,
+        "center_y": center_y,
+        "colors": colors,
+        "uid_colors": uid_colors,
+        "uid_sizes": uid_sizes,
+    }
+
+
+def _draw_descriptor_space(ax, landmark_rows, descriptor_data=None):
+    if descriptor_data is None:
+        descriptor_data = _compute_descriptor_plot_data(landmark_rows)
+
+    if descriptor_data is None:
+        ax.text(
+            0.5,
+            0.5,
+            "No valid descriptor data",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_title("Principal Component Analysis of Landmark Descriptor Space")
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        return {}, {}
+
+    coords = descriptor_data["coords"]
+    explained = descriptor_data["explained"]
+    used_cols = descriptor_data["used_cols"]
+    marker_sizes = descriptor_data["marker_sizes"]
+    center_x = descriptor_data["center_x"]
+    center_y = descriptor_data["center_y"]
+    colors = descriptor_data["colors"]
+    uid_colors = descriptor_data["uid_colors"]
+    uid_sizes = descriptor_data["uid_sizes"]
+
+    for i, (_, row) in enumerate(landmark_rows.iterrows()):
+        label_id = int(row["label_id"])
+        x = coords[i, 0]
+        y = coords[i, 1]
+        color = colors[i]
+
+        text_offset = np.sqrt(marker_sizes[i]) * 0.45 + 3.0
+
+        ax.scatter(
+            x,
+            y,
+            s=marker_sizes[i],
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            alpha=0.90,
+            zorder=3,
+        )
+
+        ax.annotate(
+            f"{label_id}",
+            xy=(x, y),
+            xytext=(text_offset, text_offset * 0.15),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+            ha="left",
+            va="center",
+            zorder=4,
+            bbox=dict(
+                facecolor=(1, 1, 1, 0.80),
+                edgecolor="none",
+                pad=1.2,
+            ),
+        )
+
+    ax.scatter(
+        [center_x],
+        [center_y],
+        s=40,
+        color="black",
+        marker="x",
+        linewidths=1.5,
+        zorder=5,
+    )
+
+    ax.set_title("Principal Component Analysis of Landmark Descriptor Space")
+    ax.set_xlabel(f"PC1 ({100.0 * explained[0]:.1f}% var)")
+    ax.set_ylabel(f"PC2 ({100.0 * explained[1]:.1f}% var)")
+    ax.grid(True, alpha=0.25)
+
+    if coords.shape[0] > 1:
+        xpad = 0.15 * max(np.ptp(coords[:, 0]), 1.0)
+        ypad = 0.15 * max(np.ptp(coords[:, 1]), 1.0)
+        ax.set_xlim(np.min(coords[:, 0]) - xpad, np.max(coords[:, 0]) + xpad)
+        ax.set_ylim(np.min(coords[:, 1]) - ypad, np.max(coords[:, 1]) + ypad)
+
+    used_txt = ", ".join(used_cols)
+    used_txt_wrapped = "\n".join(textwrap.wrap(used_txt, width=42))
+
+    ax.text(
+        0.02,
+        0.98,
+        "Distance in this space = descriptor difference\n"
+        "Same color = same landmark in mosaic\n"
+        "Bigger marker = more unique / larger landmark\n"
+        f"Used: {used_txt_wrapped}",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        bbox=dict(
+            facecolor=(1, 1, 1, 0.85),
+            edgecolor="none",
+            pad=2.0,
+        ),
+    )
+
+    return uid_colors, uid_sizes
+
+
+def _plot_descriptor_mosaic_landmarks(
+    ax,
+    matched_df,
+    uid_colors,
+    uid_sizes,
+    yaw_offset=0.0,
+    resolution=None,
+    text_size=3.0,
+):
+    for i, (_, row) in enumerate(matched_df.iterrows()):
+        uid = int(row["plot_uid"])
+        label_id = int(row["label_id"])
+
+        lm_x, lm_y = landmark_measurement_to_world(
+            row,
+            yaw_offset=yaw_offset,
+            resolution=resolution,
+        )
+
+        color = uid_colors.get(uid, (0.0, 0.0, 0.0))
+        size = uid_sizes.get(uid, 35.0)
+
+        ax.scatter(
+            lm_x,
+            lm_y,
+            s=size,
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            alpha=0.90,
+            zorder=30,
+        )
+
+        _draw_data_scaled_text(
+            ax,
+            lm_x,
+            lm_y,
+            f"{label_id}",
+            color,
+            text_size=text_size,
+            x_offset=0.08,
+            y_offset=0.08,
+            bg_pad=0.035,
+            z_base=40 + 2 * i,
+        )
+
+
+def plot_landmark_descriptors(
+    landmark_df,
+    meta_path=None,
+    feature_pose_df=None,
+    map_origin_df=None,
+    map_pose_df=None,
+    t_start=None,
+    t_stop=None,
+    title="Landmark Descriptor Space",
+    yaw_offset=0.0,
+    cmap_name="copper",
+    zero_color="white",
+):
+    if len(landmark_df) == 0:
+        raise ValueError("No landmark samples to plot")
+
+    df = load_csv_from_df_time_window(
+        landmark_df,
+        t_start=t_start,
+        t_stop=t_stop,
+    )
+
+    if len(df) == 0:
+        raise ValueError("No landmark samples inside selected time window")
+
+    df = _assign_unique_landmark_ids(df)
+    descriptor_data = _compute_descriptor_plot_data(df)
+
+    if meta_path is None:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        _draw_descriptor_space(ax, df, descriptor_data=descriptor_data)
+        ax.set_title(title)
+        plt.tight_layout()
+        plt.show()
+        return
+
+    if feature_pose_df is None:
+        raise ValueError("feature_pose_df is required when plotting mosaic next to descriptors")
+
+    mosaic, meta = load_full_map_mosaic(meta_path)
+    resolution = float(meta.get("resolution", meta.get("map_resolution", 1.0)))
+
+    feature_pose_df = filter_time_window(feature_pose_df, t_start, t_stop)
+
+    if len(feature_pose_df) == 0:
+        raise ValueError("No feature pose samples inside selected time window")
+
+    if map_origin_df is not None:
+        map_origin_df = filter_time_window(map_origin_df, t_start, t_stop)
+
+    if map_pose_df is not None:
+        map_pose_df = filter_time_window(map_pose_df, t_start, t_stop)
+
+    pose_plot_df = prepare_pose_plot_df(
+        feature_pose_df=feature_pose_df,
+        map_pose_df=map_pose_df,
+    )
+
+    matched_df = match_landmarks_to_feature_poses(
+        landmark_df=df,
+        feature_pose_df=pose_plot_df,
+    )
+
+    matched_df = attach_map_origin_and_pose_to_landmarks(
+        matched_df=matched_df,
+        map_origin_df=map_origin_df,
+        map_pose_df=map_pose_df,
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+    ax_map, ax_desc = axes
+
+    uid_colors, uid_sizes = _draw_descriptor_space(
+        ax_desc,
+        df,
+        descriptor_data=descriptor_data,
+    )
+
+    _plot_mosaic_background(
+        ax_map,
+        mosaic=mosaic,
+        meta=meta,
+        cmap_name=cmap_name,
+        zero_color=zero_color,
+    )
+
+    _plot_descriptor_mosaic_landmarks(
+        ax_map,
+        matched_df=matched_df,
+        uid_colors=uid_colors,
+        uid_sizes=uid_sizes,
+        yaw_offset=yaw_offset,
+        resolution=resolution,
+    )
+
+    ax_map.set_title("Landmarks on Map Mosaic")
+    ax_map.set_xlabel("x [m]")
+    ax_map.set_ylabel("y [m]")
+    ax_map.set_aspect("equal")
+    ax_map.grid(False)
+
+    fig.suptitle(title)
+    plt.tight_layout()
     plt.show()

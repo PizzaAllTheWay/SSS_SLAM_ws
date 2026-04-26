@@ -77,9 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parameters ----------
     #[allow(non_snake_case)]
-    // ! TRUE LOG ! let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
-    let LOG = false; // ! THIS IS FAKE LOG FOR DEBUGGING, REMOVE IT LATER AND UNCOMMENT THE "! TRUE LOG !" TO GO BACK TO NORMAL
-    
+    let LOG = node.get_parameter::<bool>("log").ok().unwrap_or(false) as bool;
+
     let filter_d = node.get_parameter::<i64>("local_map_generator.filter_d").ok().unwrap_or(0) as i32;
     let filter_sigma_color = node.get_parameter::<f64>("local_map_generator.filter_sigma_color").ok().unwrap_or(0.0);
     let filter_sigma_space = node.get_parameter::<f64>("local_map_generator.filter_sigma_space").ok().unwrap_or(0.0);
