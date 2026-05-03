@@ -166,16 +166,32 @@ This topic contains the estimated vehicle state, including **position, orientati
 ### sss_data_processing/local_map_generator
 **Purpose:**
 
-TODO:
+The `local_map_generator` package performs the main Side Scan Sonar data-processing stage. It synchronizes raw sonar pings with the estimated vehicle state and DVL altitude, applies swath processing, builds a local probabilistic sonar map, and extracts landmark measurements from the generated map. The package contains `swath_processing_node`, `map_generation_node`, and `feature_extraction_node`. Detailed documentation is available in the `sss_data_processing/local_map_generator` package README, including how some standard ROS 2 messages are used as compact containers for project-specific data to avoid custom message dependencies during logging, replay, and debugging.
 
 **Subscribes:**
 
-TODO:
+```text
+/sss_slam/data_processing/estimate/state    [nav_msgs/Odometry]
+/hardware/dvl                               [marine_acoustic_msgs/Dvl]
+/hardware/side_scan_sonar                   [marine_acoustic_msgs/RawSonarImage]
+```
 
 **Intermediate:**
 
-TODO:
+```text
+/sss_slam/data_processing/swath/pose                  [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/swath/geometric_correction  [geometry_msgs/PolygonStamped]
+/sss_slam/data_processing/swath/processed             [marine_acoustic_msgs/RawSonarImage]
+
+/sss_slam/data_processing/map_generation/altitude     [geometry_msgs/PointStamped]
+/sss_slam/data_processing/map_generation/pose         [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/map_generation/map_origin   [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/map_generation/map          [sensor_msgs/Image]
+```
 
 **Publishes:**
 
-TODO
+```text
+/sss_slam/data_processing/feature_extraction/pose      [geometry_msgs/PoseStamped]
+/sss_slam/data_processing/feature_extraction/landmarks [sensor_msgs/PointCloud2]
+```
