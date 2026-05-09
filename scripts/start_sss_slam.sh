@@ -84,11 +84,18 @@ start_state_estimator() {
   mono_execute state_estimator "ros2 launch state_estimator state_estimator.launch.py log:=${LOG}"
 }
 
+start_local_map_generator() {
+  mono_execute local_map_generator "ros2 launch local_map_generator local_map_generator.launch.py log:=${LOG}"
+}
+
 ############################################################
 # LAUNCH SEQUENCE
 ############################################################
 echo "[INFO] Starting state estimator..."
 start_state_estimator
+
+echo "[INFO] Starting local map generator..."
+start_local_map_generator
 
 # ? NOTE: This will only run when you press CTRL+C or an error occurs, otherwise it will not run
 trap cleanup EXIT SIGINT SIGTERM

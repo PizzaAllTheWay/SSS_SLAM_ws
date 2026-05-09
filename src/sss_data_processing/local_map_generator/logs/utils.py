@@ -133,6 +133,86 @@ def build_performance_timeline(
 
     return out, dropout_spans, zero_dt
 
+def build_aiding_timeline(
+    df,
+    df_aiding,
+    t_start,
+    t_stop,
+    gap_threshold_aiding=5.0,
+    gap_threshold_main=5.0,
+    dt=0.5,
+):
+    if isinstance(df_aiding, str):
+        df_aiding = load_csv(df_aiding)
+
+    df = df.copy().sort_values("t").reset_index(drop=True)
+    df_aiding = df_aiding.copy().sort_values("t").reset_index(drop=True)
+
+    # IMPORTANT: remove artificial zero-fill rows from build_performance_timeline()
+    if "is_artificial" in df.columns:
+        df = df[df["is_artificial"] == False].reset_index(drop=True)
+
+    df = df[(df["t"] >= t_start) & (df["t"] <= t_stop)].reset_index(drop=True)
+    df_aiding = df_aiding[(df_aiding["t"] >= t_start) & (df_aiding["t"] <= t_stop)].reset_index(drop=True)
+
+    t_grid = np.arange(t_start, t_stop + dt, dt)
+
+    aiding_active = np.zeros(len(t_grid), dtype=bool)
+    main_active = np.zeros(len(t_grid), dtype=bool)
+
+    for t in df_aiding["t"].to_numpy():
+        i = int(round((t - t_start) / dt))
+        if 0 <= i < len(aiding_active):
+            aiding_active[i] = True
+
+    for t in df["t"].to_numpy():
+        i = int(round((t - t_start) / dt))
+        if 0 <= i < len(main_active):
+            main_active[i] = True
+
+    aiding_active = _expand_activity(t_grid, aiding_active, gap_threshold_aiding)
+    main_active = _expand_activity(t_grid, main_active, gap_threshold_main)
+
+    # sonar inactive => pretend aiding is available
+    aiding_active[~main_active] = True
+
+    aiding_inactive = ~aiding_active
+
+    spans = []
+    in_span = False
+    span_start = None
+
+    for i, inactive in enumerate(aiding_inactive):
+        if inactive and not in_span:
+            span_start = t_grid[i]
+            in_span = True
+        elif not inactive and in_span:
+            spans.append((span_start, t_grid[i]))
+            in_span = False
+
+    if in_span:
+        spans.append((span_start, t_grid[-1]))
+
+    return spans
+
+def _expand_activity(t_grid, raw_active, gap_threshold):
+    active = np.zeros_like(raw_active, dtype=bool)
+    active_indices = np.where(raw_active)[0]
+
+    if len(active_indices) == 0:
+        return active
+
+    for i0, i1 in zip(active_indices[:-1], active_indices[1:]):
+        t0 = t_grid[i0]
+        t1 = t_grid[i1]
+
+        if t1 - t0 <= gap_threshold:
+            active[i0:i1 + 1] = True
+
+    active[active_indices] = True
+
+    return active
+
 # PLOT HELPERS ----------
 def finalize_plot():
     for ax in plt.gcf().axes:
