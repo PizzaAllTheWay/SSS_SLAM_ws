@@ -1,11 +1,9 @@
-from utils import load_all_perf, plot_metric
+from utils import load_all_schedulability, plot_schedulability
 
 
 
-WINDOW = 0.2
 T_START = 1756381030.0
 T_STOP  = 1756382638.0
-T_DELTA = 5.0
 
 
 
@@ -19,11 +17,21 @@ DATASETS = {
 
 
 def main():
-    data = load_all_perf(DATASETS, WINDOW, T_START, T_STOP, T_DELTA)
+    sched = load_all_schedulability(
+        DATASETS,
+        T_START,
+        T_STOP,
+        median_samples=2,
+        split_datasets={
+            "map_generation": {
+                "factor": 2.0,
+                "low_name": "map_generation",
+                "high_name": "map_extraction",
+            }
+        },
+    )
 
-    plot_metric(data, "runtime", "Runtime [ms]", "Callback Runtime", total_color="blue")
-    plot_metric(data, "cpu", "CPU [% core]", "CPU Usage", total_color="red")
-    plot_metric(data, "ram", "RAM [MB]", "RAM Usage", total_color="green")
+    plot_schedulability(sched, title="Schedulability", smooth_window=100)
 
 if __name__ == "__main__":
     main()

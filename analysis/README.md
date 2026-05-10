@@ -8,6 +8,7 @@ Unlike the analysis tools inside individual ROS2 packages in `src/`, which focus
 - node runtime and callback execution time  
 - CPU usage  
 - RAM usage  
+- Schedulability
 
 The goal is to evaluate how the **entire ROS2 pipeline behaves during experiments** and identify potential performance bottlenecks.
 
